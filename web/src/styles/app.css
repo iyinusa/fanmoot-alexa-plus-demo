@@ -1,0 +1,126 @@
+/* tokens.css and fonts.css are copied verbatim from fanmoot/web/src/styles
+ * (HAD-11) — edit them there, then `make brand-sync`. `make brand-check` fails
+ * CI-side review if they drift. This file is the demo's own, and starts from
+ * fanmoot's app.css so a utility means the same thing in both. */
+@import './fonts.css';
+@import './tokens.css';
+@import 'tailwindcss';
+
+/* The tokens as Tailwind utilities (`bg-surface`, `text-muted`), so the palette
+ * has exactly one definition. Same names as fanmoot. */
+@theme inline {
+  --color-bg: var(--fm-bg);
+  --color-surface: var(--fm-surface);
+  --color-raised: var(--fm-surface-raised);
+  --color-line: var(--fm-line);
+  --color-ink: var(--fm-text);
+  --color-muted: var(--fm-text-muted);
+  --color-faint: var(--fm-text-faint);
+  --color-accent: var(--fm-accent);
+  --color-brand: var(--fm-blue);
+  --color-pitch: var(--fm-green);
+  --color-live: var(--fm-green-bright);
+  --color-amber: var(--fm-amber);
+  --color-danger: var(--fm-red);
+
+  --font-display: var(--fm-font-display);
+  --font-heading: var(--fm-font-heading);
+  --font-body: var(--fm-font-body);
+
+  --radius-fm: var(--fm-radius);
+  --radius-fm-sm: var(--fm-radius-sm);
+  --radius-fm-lg: var(--fm-radius-lg);
+}
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background: var(--fm-bg);
+    color: var(--fm-text);
+    font-family: var(--fm-font-body);
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--fm-font-heading);
+    /* Lato has no 600; a synthesised one smears. */
+    font-weight: 700;
+    letter-spacing: -0.015em;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--fm-accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: var(--fm-blue);
+    color: #ffffff;
+  }
+
+  /* Crests are fetched from fanmoot.com at runtime (HAD-11), so matched by
+   * path anywhere in the URL rather than from this origin's root. */
+  img[src*='/static/badges/'] {
+    background-color: var(--fm-crest-plate);
+    border-radius: var(--fm-crest-radius);
+    box-shadow: 0 0 0 2px var(--fm-crest-plate);
+  }
+}
+
+@layer components {
+  /* Tabular figures so a live score does not jitter as it changes. */
+  .fm-score {
+    font-family: var(--fm-font-display);
+    font-weight: 900;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  /* The pitch behind every screen, as in fanmoot (FieldBackdrop). */
+  .fm-field {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    color: var(--fm-field-line);
+    background:
+      radial-gradient(90% 60% at 88% -8%, var(--fm-field-glow-a), transparent 62%),
+      radial-gradient(80% 55% at -6% 104%, var(--fm-field-glow-b), transparent 62%);
+  }
+
+  .fm-field svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    opacity: var(--fm-field-opacity);
+    -webkit-mask-image: radial-gradient(130% 95% at 50% 0%, #000 30%, transparent 88%);
+    mask-image: radial-gradient(130% 95% at 50% 0%, #000 30%, transparent 88%);
+  }
+
+  .fm-field svg * {
+    vector-effect: non-scaling-stroke;
+  }
+}
+
+@layer utilities {
+  @media (prefers-reduced-motion: reduce) {
+    .fm-motion,
+    .fm-motion * {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  .fm-tap {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

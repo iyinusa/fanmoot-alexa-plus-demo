@@ -1,0 +1,40 @@
+# Local development overlay. Never used in production.
+#
+#   make up     # creates dokploy-network if needed, then builds and starts
+#
+# Deliberately NOT named `docker-compose.override.yml`, because Compose loads
+# that filename automatically — including on the Dokploy host, where it would
+# publish port 8090 in production and collide with Traefik.
+
+services:
+  demo:
+    # Safe locally: `fanmoot` takes 8000, `fanmoot-mcp` 8080, this 8090.
+    ports:
+      - "8090:8090"
+
+    volumes:
+      # Live-reload sources so edits land without a rebuild.
+      - ./app:/app/app
+      - ./tests:/app/tests
+      # …except the built SPA. The bind mount above would otherwise shadow the
+      # bundle the image built with whatever the host's (gitignored, often
+      # empty) app/static/web holds. An anonymous volume here keeps the
+      # image's copy; `make up` passes --renew-anon-volumes so a rebuilt image
+      # replaces it rather than serving last week's bundle.
+      - /app/app/static/web
+
+    environment:
+      FMD_ENV: development
+      FMD_PUBLIC_BASE_URL: ${FMD_PUBLIC_BASE_URL:-http://localhost:8090}
+      # A fanmoot-mcp running on the host rather than production is reached as
+      # host.docker.internal from inside the container, never localhost:
+      #   FMD_MCP_URL=http://host.docker.internal:8080/mcp make up
+      FMD_MCP_URL: ${FMD_MCP_URL:-https://mcp.fanmoot.com/mcp}
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    # One uvicorn worker with --reload instead of gunicorn. `exec` so signals
+    # reach uvicorn and Ctrl-C stops it promptly.
+    command: >
+      sh -c 'exec uvicorn app.main:app --host 0.0.0.0 --port 8090 --reload'

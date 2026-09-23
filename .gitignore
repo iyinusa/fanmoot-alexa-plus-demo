@@ -1,0 +1,36 @@
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Secrets — never commit these ─────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ── Frontend ─────────────────────────────────────────────────────────────────
+node_modules/
+web/dist/
+.vite/
+*.tsbuildinfo
+
+# The built SPA lands in app/static/web at image-build time; web/ is the
+# source of truth, so the build output is not committed.
+app/static/web/
+
+# ── OS / editor ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/*
+!.vscode/settings.json

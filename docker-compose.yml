@@ -1,0 +1,65 @@
+# Production stack for Dokploy.
+#
+# Two things about this file are load-bearing, as in `fanmoot` and
+# `fanmoot-mcp`:
+#
+#  1. There is NO `ports:` mapping. Dokploy's Traefik routes to this container
+#     over the shared `dokploy-network` on its internal port. Publishing 8090
+#     binds the host port and bypasses (or collides with) Traefik.
+#
+#  2. Every FMD_* variable is injected explicitly under `environment:`. Dokploy
+#     passes configuration through its UI, not as a committed .env file, so
+#     `env_file:` alone would leave the container with nothing.
+#
+# No database and no volume: the demo is stateless between restarts. A
+# visitor's session is in memory and a fan's grant lives on the MCP server.
+
+services:
+  demo:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # ── Environment & identity ──────────────────────────────────────────
+      FMD_ENV: ${FMD_ENV:-production}
+      FMD_PUBLIC_BASE_URL: ${FMD_PUBLIC_BASE_URL:-https://alexaplus.fanmoot.com}
+
+      # ── The MCP server this demo drives ─────────────────────────────────
+      FMD_MCP_URL: ${FMD_MCP_URL:-https://mcp.fanmoot.com/mcp}
+
+      # ── /ws ─────────────────────────────────────────────────────────────
+      FMD_WS_ALLOWED_ORIGINS: ${FMD_WS_ALLOWED_ORIGINS:-}
+
+    expose:
+      - "8090"
+
+    command: >
+      gunicorn app.main:app
+      -k uvicorn.workers.UvicornWorker
+      -b 0.0.0.0:8090
+      --workers 1
+      --timeout 90
+      --graceful-timeout 30
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8090/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    networks:
+      - dokploy-network
+
+networks:
+  # Created by Dokploy on its host. Locally, `make up` creates it once.
+  dokploy-network:
+    external: true

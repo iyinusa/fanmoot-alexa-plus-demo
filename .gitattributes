@@ -1,2 +1,11 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+* text=auto eol=lf
+
+# Binary assets — never diffed or line-ending mangled.
+*.png binary
+*.jpg binary
+*.webp binary
+*.ico binary
+*.woff2 binary
+
+# Lockfiles are generated; collapse them in reviews.
+web/package-lock.json -diff linguist-generated

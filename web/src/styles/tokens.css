@@ -1,0 +1,175 @@
+/* Fanmoot design tokens — "Floodlit".
+ *
+ * Dark-first, because the product is a matchday product: people use it in the
+ * evening, in a pub, on a sofa with the game on. Light is a full peer, not an
+ * afterthought — every token below is defined in both.
+ *
+ * Theming rule, and the reason this file is structured the way it is:
+ * every colour gets its value on bare `:root` first, then is *redefined* under
+ * the dark media query and again under `[data-theme="dark"]`. A colour whose
+ * only definition lives inside a media query is a colour that vanishes when
+ * the viewer's OS says the other thing.
+ *
+ * Three theme states, not two:
+ *   - explicit choice  -> `data-theme="light" | "dark"` on <html>
+ *   - system           -> no attribute, `prefers-color-scheme` decides
+ * The *default* is dark (src/lib/theme.ts, and `data-theme="dark"` in
+ * index.html so the first paint is already right) — the landing page is
+ * always dark, and a first visit should not step from it into white.
+ * The `:not([data-theme="light"])` guard is what lets an explicit light choice
+ * win over a dark OS setting.
+ */
+
+:root {
+  /* ── Brand, from the mark itself ───────────────────────────────────── */
+  --fm-blue: #0444c8;
+  --fm-blue-deep: #032f8c;
+  --fm-blue-soft: #e8eeff;
+  --fm-green: #409e46;
+  --fm-green-bright: #4fbf57;
+
+  /* ── Status ────────────────────────────────────────────────────────── */
+  --fm-amber: #f2a73b;   /* pending review, yellow card */
+  --fm-red: #d93a3a;     /* destructive, red card, rejected */
+
+  /* ── Light theme surfaces (the default definitions) ────────────────── */
+  --fm-bg: #f7f9fc;
+  --fm-surface: #ffffff;
+  --fm-surface-raised: #ffffff;
+  --fm-line: rgb(11 15 20 / 0.10);
+  --fm-line-strong: rgb(11 15 20 / 0.18);
+  --fm-text: #0b0f14;
+  --fm-text-muted: #5b6672;
+  --fm-text-faint: #8a94a0;
+  --fm-accent: var(--fm-blue);
+  --fm-accent-text: #ffffff;
+  --fm-ring: rgb(4 68 200 / 0.45);
+  --fm-shadow: 0 1px 2px rgb(11 15 20 / 0.06), 0 8px 24px rgb(11 15 20 / 0.06);
+
+  /* ── Club theming ──────────────────────────────────────────────────────
+   * Overwritten per club by ClubTheme at runtime, so a club page picks up the
+   * club's own colours. Defaults to the brand so nothing is ever unstyled.
+   * `--club-ink` is the readable text colour ON --club-primary and is computed
+   * from luminance, not guessed — see useClubTheme. */
+  --club-primary: var(--fm-blue);
+  --club-secondary: var(--fm-green);
+  --club-ink: #ffffff;
+
+  /* ── Type ──────────────────────────────────────────────────────────────
+   * Fallbacks are real, not decorative: the page paints in them for the few
+   * hundred milliseconds before the woff2 arrives, and on the very first load
+   * of an offline install. */
+  /* One family, four weights: 300 / 400 / 700 / 900. **Lato has no 600** —
+   * a `font-weight: 600` request resolves upward to 700 by the CSS matching
+   * rules, so `font-semibold` and `font-bold` rendered identically. The
+   * components say `font-bold` now so the code means what the screen shows.
+   *
+   * One family, four weights. `display` and `heading` stay as separate tokens
+   * because the *roles* are still distinct — a scoreline and a section title
+   * want different weights and tracking even when they share a face — and
+   * because a future rebrand can point one of them somewhere else without
+   * touching every component. */
+  --fm-font-body: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --fm-font-heading: var(--fm-font-body);
+  --fm-font-display: var(--fm-font-body);
+
+  /* ── Geometry ──────────────────────────────────────────────────────── */
+  --fm-radius: 12px;
+  --fm-radius-sm: 8px;
+  --fm-radius-lg: 18px;
+  --fm-header-h: 56px;
+  --fm-tabbar-h: 60px;
+
+  /* ── Motion ────────────────────────────────────────────────────────────
+   * Named durations so "fast" means the same thing everywhere. The easing is a
+   * gentle overshoot — it reads as physical without being bouncy. */
+  --fm-fast: 140ms;
+  --fm-base: 240ms;
+  --fm-slow: 420ms;
+  --fm-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* ── The pitch behind every screen (FieldBackdrop) ─────────────────── */
+  --fm-field-line: #0b3d1a;
+  --fm-field-opacity: 0.07;
+  --fm-field-glow-a: rgb(4 68 200 / 0.07);
+  --fm-field-glow-b: rgb(64 158 70 / 0.07);
+
+  /* ── Crests ────────────────────────────────────────────────────────────
+   * A plate behind every crest in dark, none in light. Crests are drawn for
+   * white paper: Ligue 1's black wordmark or Juventus's black shield all but
+   * vanish on #0b0f14. `pip` is the crest on an avatar, which keeps a page-
+   * coloured cutout in light so it reads over a busy photo. */
+  --fm-crest-plate: transparent;
+  --fm-crest-radius: 0;
+  --fm-crest-pip: var(--fm-bg);
+
+  color-scheme: light dark;
+}
+
+/* System preference is dark, and the viewer has not chosen light. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --fm-bg: #0b0f14;
+    --fm-surface: #151b23;
+    --fm-surface-raised: #1c242e;
+    --fm-line: rgb(255 255 255 / 0.10);
+    --fm-line-strong: rgb(255 255 255 / 0.20);
+    --fm-text: #f7f9fc;
+    --fm-text-muted: #9aa6b4;
+    --fm-text-faint: #6b7684;
+    --fm-blue-soft: rgb(4 68 200 / 0.18);
+    --fm-accent: #4d80ff;
+    --fm-accent-text: #05132e;
+    --fm-ring: rgb(77 128 255 / 0.55);
+    --fm-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.35);
+    --fm-field-line: #ffffff;
+    --fm-field-opacity: 0.06;
+    --fm-field-glow-a: rgb(31 92 255 / 0.16);
+    --fm-field-glow-b: rgb(47 158 58 / 0.10);
+    --fm-crest-plate: #ffffff;
+    --fm-crest-radius: 6px;
+    --fm-crest-pip: #ffffff;
+  }
+}
+
+/* Explicit dark choice wins regardless of the OS. */
+/* A club colour used as *text* (M15-3). `clubStyle()` in lib/theme.ts sets two
+   variants on the element — each already checked for 4.5:1 against that
+   theme's card surface — and these rules pick the one for the theme in force,
+   following the same three states as the tokens: light by default, dark from
+   the media query unless light was chosen, dark when chosen. */
+[style*='--club-text-light'] {
+  --club-text: var(--club-text-light);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) [style*='--club-text-dark'] {
+    --club-text: var(--club-text-dark);
+  }
+}
+:root[data-theme='dark'] [style*='--club-text-dark'] {
+  --club-text: var(--club-text-dark);
+}
+
+:root[data-theme='dark'] {
+  --fm-bg: #0b0f14;
+  --fm-surface: #151b23;
+  --fm-surface-raised: #1c242e;
+  --fm-line: rgb(255 255 255 / 0.10);
+  --fm-line-strong: rgb(255 255 255 / 0.20);
+  --fm-text: #f7f9fc;
+  --fm-text-muted: #9aa6b4;
+  --fm-text-faint: #6b7684;
+  --fm-blue-soft: rgb(4 68 200 / 0.18);
+  --fm-accent: #4d80ff;
+  --fm-accent-text: #05132e;
+  --fm-ring: rgb(77 128 255 / 0.55);
+  --fm-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.35);
+  --fm-field-line: #ffffff;
+  --fm-field-opacity: 0.06;
+  --fm-field-glow-a: rgb(31 92 255 / 0.16);
+  --fm-field-glow-b: rgb(47 158 58 / 0.10);
+  --fm-crest-plate: #ffffff;
+  --fm-crest-radius: 6px;
+  --fm-crest-pip: #ffffff;
+}

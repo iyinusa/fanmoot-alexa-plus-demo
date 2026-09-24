@@ -2,7 +2,8 @@
 
 The same shape as ``fanmoot``'s ``app/spa.py``, trimmed to one bundle. This
 router is registered **last**, so ``/healthz``, ``/ws`` and ``/api/*`` get first
-refusal and only what nothing else claimed falls through to the shell.
+refusal and only what nothing else claimed falls through to the shell. ``/linked``
+— where the sign-in popup lands (W1-7) — is an SPA route, so it is served here.
 
 Unmatched paths under ``/api/`` and the asset directories return a real 404
 rather than ``index.html``: an API call answered with HTML is a JSON parse
@@ -25,7 +26,7 @@ router = APIRouter(include_in_schema=False)
 WEB_DIR = Path(__file__).resolve().parent / "static" / "web"
 
 #: Prefixes the SPA must never answer for.
-_NEVER_SPA = ("/api/", "/ws", "/healthz", "/.well-known/")
+_NEVER_SPA = ("/api/", "/ws", "/healthz", "/.well-known/", "/oauth/")
 
 #: Directories of real files in the bundle. Missing under one of these is a
 #: wrong URL, never an app route.

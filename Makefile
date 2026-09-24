@@ -16,7 +16,7 @@ BRAND_FILES := src/styles/tokens.css src/styles/fonts.css \
 	public/fonts/lato-700.woff2 public/fonts/lato-900.woff2 public/theme.js
 
 .DEFAULT_GOAL := help
-.PHONY: help install web-install dev dev-web test lint fmt types typecheck-web check build-web brand-check brand-sync build up down logs shell clean
+.PHONY: help install web-install dev dev-web test test-live evidence lint fmt types typecheck-web check build-web brand-check brand-sync build up down logs shell clean
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -38,6 +38,14 @@ dev-web:  ## Vite dev server on :5174 (proxies /ws and /healthz to :8090)
 test:  ## Run the test suite (offline — no network, no built bundle needed)
 	$(VENV)/bin/pytest -q
 
+test-live:  ## W1-9 against the deployed MCP server (FMD_LIVE_MODEL=1 adds a real-model run)
+	$(VENV)/bin/pytest -q -m live -s
+
+# The chain to capture with; empty means the Bedrock rungs of FMD_MODEL_CHAIN.
+CHAIN ?=
+evidence:  ## W1-10: a Bedrock-only run of the standing scenario, kept in evidence/
+	$(PY) scripts/capture_evidence.py $(if $(CHAIN),--chain $(CHAIN),)
+
 lint:  ## Check style and import order
 	$(VENV)/bin/ruff check .
 	$(VENV)/bin/ruff format --check .
@@ -47,7 +55,7 @@ fmt:  ## Autoformat and apply safe fixes
 	$(VENV)/bin/ruff format .
 
 types:  ## Type-check the server with mypy --strict
-	$(VENV)/bin/mypy app
+	$(VENV)/bin/mypy app scripts
 
 typecheck-web:  ## Type-check the SPA with tsc -b
 	cd web && npx tsc -b

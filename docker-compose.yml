@@ -12,7 +12,9 @@
 #     `env_file:` alone would leave the container with nothing.
 #
 # No database and no volume: the demo is stateless between restarts. A
-# visitor's session is in memory and a fan's grant lives on the MCP server.
+# visitor's session — their MCP session, conversation and grant — is in this
+# process's memory; the grant itself lives on the MCP server. A restart ends
+# every session and revokes every visitor's own grant on the way out.
 
 services:
   demo:
@@ -31,6 +33,37 @@ services:
 
       # ── /ws ─────────────────────────────────────────────────────────────
       FMD_WS_ALLOWED_ORIGINS: ${FMD_WS_ALLOWED_ORIGINS:-}
+
+      # ── Visitor sessions ────────────────────────────────────────────────
+      FMD_MAX_SESSIONS: ${FMD_MAX_SESSIONS:-200}
+      FMD_SESSION_GRACE_S: ${FMD_SESSION_GRACE_S:-300}
+      FMD_SESSION_IDLE_S: ${FMD_SESSION_IDLE_S:-3600}
+      FMD_SESSION_TURN_CAP: ${FMD_SESSION_TURN_CAP:-40}
+
+      # ── The model chain (HAD-9) ─────────────────────────────────────────
+      FMD_MODEL_CHAIN: ${FMD_MODEL_CHAIN:-bedrock/us.amazon.nova-pro-v1:0,bedrock/us.anthropic.claude-sonnet-4-6,gemini/gemini-2.5-flash}
+      FMD_AWS_REGION: ${FMD_AWS_REGION:-us-east-1}
+      FMD_AWS_ACCESS_KEY_ID: ${FMD_AWS_ACCESS_KEY_ID:-}
+      FMD_AWS_SECRET_ACCESS_KEY: ${FMD_AWS_SECRET_ACCESS_KEY:-}
+      FMD_AWS_SESSION_TOKEN: ${FMD_AWS_SESSION_TOKEN:-}
+      FMD_GEMINI_API_KEY: ${FMD_GEMINI_API_KEY:-}
+      FMD_MODEL_PRICES: ${FMD_MODEL_PRICES:-}
+      FMD_PROVIDER_DAILY_CAP_USD: ${FMD_PROVIDER_DAILY_CAP_USD:-}
+
+      # ── OAuth (W1-7) ────────────────────────────────────────────────────
+      FMD_OAUTH_CLIENT_MODE: ${FMD_OAUTH_CLIENT_MODE:-auto}
+      FMD_OAUTH_CLIENT_ID: ${FMD_OAUTH_CLIENT_ID:-}
+      FMD_OAUTH_CLIENT_SECRET: ${FMD_OAUTH_CLIENT_SECRET:-}
+
+      # ── The demo fan (W1-8) ─────────────────────────────────────────────
+      FMD_DEMO_FAN_EMAIL: ${FMD_DEMO_FAN_EMAIL:-}
+      FMD_DEMO_FAN_PASSWORD: ${FMD_DEMO_FAN_PASSWORD:-}
+      FMD_DEMO_FAN_LABEL: ${FMD_DEMO_FAN_LABEL:-Demo fan account}
+      FMD_DEMO_FAN_WRITES_PER_SESSION: ${FMD_DEMO_FAN_WRITES_PER_SESSION:-5}
+      FMD_DEMO_FAN_WRITES_PER_HOUR: ${FMD_DEMO_FAN_WRITES_PER_HOUR:-30}
+
+      # ── Operator ────────────────────────────────────────────────────────
+      FMD_ADMIN_TOKEN: ${FMD_ADMIN_TOKEN:-}
 
     expose:
       - "8090"

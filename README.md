@@ -3,14 +3,16 @@
 **Where fans debate football — now by voice.**
 
 A web simulation of Fanmoot running as an Alexa+ experience, live at
-**`https://alexaplus.fanmoot.com`**. You ask about a match out loud, and an
-agent answers by calling the real [Fanmoot MCP server](https://mcp.fanmoot.com/mcp).
-A trace panel beside the conversation shows every MCP frame as it happens.
+**`https://alexaplus.fanmoot.com`**. You ask about a match, and an agent answers
+by calling the real [Fanmoot MCP server](https://mcp.fanmoot.com/mcp). A trace
+beside the conversation shows every MCP frame, OAuth request and model call as
+it happens.
 
-> **Status: skeleton (W0).** The container, the FastAPI shell, `/ws` and the
-> Floodlit-branded SPA are in place. The agent, the Alexa+ shell and the trace
-> inspector come next. The sections marked *W1+* below describe them before
-> they exist.
+> **Status: the Alexa+ shell (W2).** A real ADK agent, Bedrock first, drives a
+> real MCP session against `mcp.fanmoot.com` and signs fans in through a real
+> OAuth 2.1 flow. The browser shows it as a smart display: voice in and out,
+> captions, the server's own cards, and live scores in the corner. The trace
+> inspector (W3) comes next; until then a simpler trace sits beside the device.
 
 ## Why a simulation
 
@@ -18,25 +20,61 @@ The Alexa+ Add-on toolkit is partner-gated, and the hackathon organisers have
 confirmed it is not available to participants. They asked for a simulated
 experience that looks and feels functional. This is one. **The simulation is
 only the surface.** The MCP server it calls is real, deployed, and connectable
-from Claude, ChatGPT or any other MCP client today. The views it renders are the
-server's own `ui://` resources.
+from Claude, ChatGPT or any other MCP client today. The agent's answers are
+real model output, not a script.
 
 This project is not affiliated with, endorsed by or certified by Amazon.
 
 ## How it is built
 
-```
+```text
 browser ──/ws──▶ FastAPI (this repo) ──Streamable HTTP──▶ mcp.fanmoot.com/mcp ──▶ fanmoot.com/v1
-                 └ ADK agent (W1)
-                   Bedrock first, Gemini fallback
+                 ├ ADK agent, per turn         ▲
+                 │  Bedrock → Bedrock → Gemini │ OAuth 2.1 + PKCE S256
+                 ├ one MCP session per visitor ┘ (the sign-in popup)
+                 └ the trace: every frame, redacted
 ```
 
-- **One image, two stages.** A Node stage builds the React app, and a Python
-  stage serves it together with the agent API from one FastAPI process. One
-  origin and one route, so there is no CORS.
+- **The tools come from the server.** Each turn, the agent is given exactly
+  the tools `tools/list` returned, with the server's own descriptions and JSON
+  Schemas. Nothing about a tool is written in this repository, so the demo
+  cannot drift from the server.
+- **One real MCP session per visitor**, with the official `mcp` client SDK,
+  negotiating protocol `2025-11-25`. When the server refuses a call with a 401
+  challenge, the visitor gets a "Sign in to Fanmoot" button.
+- **A switchable model chain.** `FMD_MODEL_CHAIN` lists models in order: Amazon
+  Nova Pro on Bedrock first, Claude on Bedrock second, Gemini third. A provider
+  that errors, throttles or times out falls through to the next one for that
+  model call. The chain is read every turn and can be reordered on a running
+  demo (see [Operator API](#operator-api)). Every call's tokens and estimated
+  cost are counted per provider, with optional daily ceilings.
+- **A real sign-in.** "Sign in to Fanmoot" opens the MCP server's own
+  `/authorize` in a popup. The demo discovers the authorization server
+  (RFC 9728, RFC 8414), sends PKCE S256, `state` and a `resource` indicator,
+  checks `iss` on the way back, and redeems the code on the server. The browser
+  never sees a token.
 - **The browser holds nothing sensitive.** Model credentials, the MCP session
-  and any OAuth grant stay on the server. The browser gets turns and trace
-  frames over `/ws`.
+  and any grant stay in this process. The browser gets turns and trace frames
+  over `/ws`, with tokens and email addresses struck out before they are sent.
+- **The cards are the server's own.** When a tool has a view, the demo reads
+  the `ui://` resource over MCP and runs it as an MCP Apps host would
+  (`2026-01-26`). The view runs in `/sandbox`, a proxy framed without
+  `allow-same-origin`, so it gets an opaque origin of its own. Inside it, a CSP
+  built from the resource's declared domains applies. The thread card's reply
+  box calls `reply_to_moot` through the host bridge, on the visitor's own MCP
+  session and grant.
+- **Voice, from the browser.** Speech in uses the Web Speech API, with a typed
+  field for browsers without it. Answers are spoken sentence by sentence as
+  they stream, with a captions track that follows the synthesiser's word
+  boundaries. The waveform shows the microphone's real spectrum while
+  listening.
+- **Live scores before anyone speaks.** While a visitor is connected, their
+  session calls `live_scores` on a timer. With nothing in play it calls
+  `upcoming_matches` instead. These calls appear on the trace marked
+  `ambient`, and calls made by a card are marked `view`.
+- **One image, two stages.** A Node stage builds the React app, and a Python
+  stage serves it with the agent from one FastAPI process. One origin, one
+  route, no CORS.
 - **Brand from the source.** The Floodlit design tokens and the Lato font files
   are copied unchanged from `fanmoot/web`, and `make brand-check` fails if they
   drift.
@@ -45,12 +83,17 @@ browser ──/ws──▶ FastAPI (this repo) ──Streamable HTTP──▶ mc
 
 ```bash
 make install && cp .env.example .env
+# Add model credentials to .env: FMD_AWS_* for Bedrock, FMD_GEMINI_API_KEY for Gemini.
 make build-web          # the SPA → app/static/web
 make dev                # http://localhost:8090
 ```
 
+Without model credentials the demo still starts and connects to the MCP
+server. Each turn then ends with a clear "no model could answer" message, and
+the trace shows which models were skipped and why.
+
 For frontend work, run `make dev` and `make dev-web` side by side. Vite serves
-on `:5174` with hot reload and proxies `/ws` and `/healthz` to `:8090`.
+on `:5174` with hot reload and proxies `/ws`, `/oauth` and `/healthz` to `:8090`.
 
 In Docker, the same stack Dokploy runs:
 
@@ -61,29 +104,107 @@ make up                 # http://localhost:8090
 | Command | What it does |
 |---|---|
 | `make check` | Everything CI runs: ruff, `mypy --strict`, `tsc -b`, pytest |
+| `make test-live` | The multi-turn scenario against the deployed MCP server. Add `FMD_LIVE_MODEL=1` for a real-model run |
+| `make evidence` | A Bedrock-only run of that scenario, saved to `evidence/` |
 | `make build-web` | Build the SPA into `app/static/web` |
 | `make brand-check` | Diff the Floodlit tokens and fonts against a sibling `fanmoot` checkout |
 | `make help` | Every target |
 
+### Tests
+
+`make test` runs offline. It starts a real Streamable HTTP MCP server on a
+loopback port (built with the SDK's own FastMCP, with a 401/403 gate like the
+real server's), fakes the authorization server at the HTTP layer, and scripts
+the model. The agent, the failover chain, the MCP client, the OAuth client and
+ADK all run for real.
+
+`make test-live` drives five turns against `https://mcp.fanmoot.com/mcp` and
+checks the tool calls in order, the `2025-11-25` handshake, and that an
+unauthenticated post is refused with a 401 challenge. Nothing is posted.
+
 ## Configuration
 
 Every setting is an environment variable with the `FMD_` prefix. See
-[`.env.example`](.env.example).
+[`.env.example`](.env.example) for all of them. The ones you are most likely to
+set:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `FMD_ENV` | `development` | `production` switches to JSON logs |
-| `FMD_PUBLIC_BASE_URL` | `http://localhost:8090` | This demo's origin, and the one `/ws` always accepts |
+| `FMD_PUBLIC_BASE_URL` | `http://localhost:8090` | This demo's origin. `/ws` accepts it, and the OAuth redirect URI is built from it |
 | `FMD_MCP_URL` | `https://mcp.fanmoot.com/mcp` | The MCP server the demo drives |
-| `FMD_WS_ALLOWED_ORIGINS` | *(empty)* | More browser origins allowed to open `/ws` |
+| `FMD_MODEL_CHAIN` | Nova Pro, Claude, Gemini | LiteLLM model ids, tried in order. Each needs its provider prefix: `bedrock/…`, `gemini/…` |
+| `FMD_AWS_REGION` | `us-east-1` | Bedrock region. Enable each model in the Bedrock console for it |
+| `FMD_AWS_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` | *(empty)* | Bedrock keys. Empty means the standard AWS credential chain |
+| `FMD_GEMINI_API_KEY` | *(empty)* | Google AI Studio key. Empty skips the Gemini rung |
+| `FMD_PROVIDER_DAILY_CAP_USD` | *(empty)* | Daily spend ceiling per provider, e.g. `{"bedrock": 25, "gemini": 5}` |
+| `FMD_OAUTH_CLIENT_MODE` | `auto` | How the demo identifies itself to the authorization server. See below |
+| `FMD_DEMO_FAN_EMAIL` / `_PASSWORD` | *(empty)* | A real Fanmoot account visitors may post as. Empty hides the option |
+| `FMD_ADMIN_TOKEN` | *(empty)* | Bearer token for `/api/admin/models`. Empty disables it |
+| `FMD_AMBIENT_INTERVAL_S` | `30` | Seconds between the ticker's `live_scores` calls. `0` turns the ticker off |
+
+### How the demo signs in as a client
+
+With `FMD_OAUTH_CLIENT_MODE=auto`:
+
+- On an `https` deployment, the demo uses a **client ID metadata document**
+  (SEP-991, recommended by the `2025-11-25` spec). Its `client_id` is the URL
+  of `/oauth/client-metadata.json`, which it serves itself. Nothing needs
+  registering and there is no secret.
+- On `http://localhost`, the authorization server cannot fetch that document,
+  so the demo registers itself with **Dynamic Client Registration** (RFC 7591),
+  once per process.
+- With `FMD_OAUTH_CLIENT_ID` set, it uses that **static client**.
+
+### The demo fan account
+
+For visitors who do not want to sign up, the demo can act as one shared, real
+Fanmoot account. It is labelled as the demo account on screen and to the model.
+The demo links it through the same OAuth flow a visitor uses, at first use, and
+re-links it if the grant is lost. Its writes are limited per session
+(`FMD_DEMO_FAN_WRITES_PER_SESSION`) and per hour across all visitors
+(`FMD_DEMO_FAN_WRITES_PER_HOUR`).
 
 ## Endpoints
 
 | Path | |
 |---|---|
 | `/` | The demo SPA, with client-side routing fallback |
-| `/ws` | The conversation and trace channel. W0 greets with `hello` and answers `ping` |
-| `/healthz` | Always 200. Reports the build, the MCP server's reachability and protocol version, and whether the SPA is built |
+| `/ws` | The conversation and trace channel ([protocol](app/ws.py)) |
+| `/oauth/start` | Opened by the sign-in popup. Starts a PKCE authorization and redirects to the MCP server's `/authorize` |
+| `/oauth/callback` | Where the fan returns. The code is redeemed here, server-side |
+| `/oauth/client-metadata.json` | This demo's OAuth client metadata (SEP-991) |
+| `/linked` | The popup's last page. Tells the opener and closes |
+| `/sandbox` | The MCP Apps sandbox proxy the server's `ui://` views run in. Only this origin may frame it |
+| `/api/admin/models` | The model chain and today's spend. Needs `FMD_ADMIN_TOKEN` |
+| `/healthz` | Always 200. Reports the build, the MCP server's reachability and protocol version, the model chain and whether the SPA is built |
+
+## Operator API
+
+Read the chain and today's usage per provider:
+
+```bash
+curl -H "Authorization: Bearer $FMD_ADMIN_TOKEN" https://alexaplus.fanmoot.com/api/admin/models
+```
+
+Put Gemini first, from the next turn on, without a redeploy:
+
+```bash
+curl -X PUT -H "Authorization: Bearer $FMD_ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"chain": ["gemini/gemini-2.5-flash", "bedrock/us.amazon.nova-pro-v1:0"]}' \
+  https://alexaplus.fanmoot.com/api/admin/models
+```
+
+`DELETE` on the same URL goes back to `FMD_MODEL_CHAIN`. The override is held in
+memory, so a restart also goes back to it.
+
+## AWS Builder evidence
+
+`make evidence` runs the standing five-turn scenario against the live MCP server
+with the model chain cut to Bedrock only. It writes the full frame transcript
+and a readable summary (the Bedrock model that answered each turn, tokens,
+estimated cost and tools called) to [`evidence/`](evidence/). It refuses to
+write anything if there are no AWS credentials or if any turn was answered by a
+model that is not on Bedrock.
 
 ## Licence
 

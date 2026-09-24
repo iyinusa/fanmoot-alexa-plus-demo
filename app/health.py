@@ -22,6 +22,7 @@ import httpx
 from fastapi import APIRouter
 
 from app import __version__, spa
+from app.agent import models
 from app.logging_config import get_logger
 from app.settings import get_settings
 
@@ -65,5 +66,12 @@ async def healthz() -> dict[str, Any]:
         # Read from the server, never written here: a demo that asserted a
         # protocol version the server no longer speaks would be the demo lying.
         "mcp_protocol_version": (upstream or {}).get("mcp_protocol_version"),
+        # Names only: which models a turn would try, and whether each has what
+        # it needs. Never a credential.
+        "model_chain": [
+            {"model": rung.qualified, "ready": models.unconfigured_reason(rung, settings) is None}
+            for rung in models.current_chain(settings)
+        ],
+        "demo_fan": settings.demo_fan_configured,
         "checks": checks,
     }

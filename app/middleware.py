@@ -101,8 +101,10 @@ _ALWAYS = (
 #:   at runtime rather than copied here (HAD-11).
 #: * ``connect-src 'self'`` covers ``/ws`` on this origin. The browser never
 #:   talks to the MCP server directly — the session is held server-side (HAD-10).
-#: * ``frame-src 'self'`` is a placeholder for W2-6, which renders the server's
-#:   ``ui://`` views in a sandboxed iframe and will say exactly how here.
+#: * ``frame-src 'self'`` is for ``/sandbox`` alone (W2-6): the server's
+#:   ``ui://`` views render inside it, framed with ``sandbox`` and no
+#:   ``allow-same-origin``, so they run on an opaque origin of their own and
+#:   never with this page's. ``app.sandbox`` sets that page's own policy.
 #: * ``microphone=(self)``: the demo listens (W2-4), and nothing it embeds may.
 _HTML_CSP = (
     b"default-src 'self'; script-src 'self'; style-src 'self'; "

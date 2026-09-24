@@ -36,6 +36,32 @@ def test_ws_origins_in_production() -> None:
     assert settings.is_production
 
 
+def test_malformed_json_settings_are_refused_at_boot() -> None:
+    with pytest.raises(ValueError, match="not valid JSON"):
+        Settings(provider_daily_cap_usd="{bedrock: 25}")
+    with pytest.raises(ValueError, match="one of"):
+        Settings(oauth_client_mode="password")
+
+
+def test_json_settings_are_read_as_what_they_mean() -> None:
+    settings = Settings(
+        provider_daily_cap_usd='{"Bedrock": 25, "gemini": 5.5}',
+        model_prices='{"custom/model": [1, 2]}',
+    )
+
+    assert settings.provider_caps == {"bedrock": 25.0, "gemini": 5.5}
+    assert settings.model_price_overrides == {"custom/model": (1.0, 2.0)}
+
+
+def test_the_oauth_addresses_follow_the_public_url() -> None:
+    settings = Settings(public_base_url="https://alexaplus.fanmoot.com/")
+
+    assert settings.oauth_redirect_uri == "https://alexaplus.fanmoot.com/oauth/callback"
+    assert settings.oauth_metadata_document_url == (
+        "https://alexaplus.fanmoot.com/oauth/client-metadata.json"
+    )
+
+
 def test_development_allows_the_vite_dev_server() -> None:
     settings = Settings(env="development", public_base_url="http://localhost:8090")
 

@@ -26,8 +26,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# curl is the healthcheck's only requirement. No build-essential yet: nothing
-# W0 installs lacks a prebuilt wheel. W1's dependencies may change that.
+# curl is the healthcheck's only requirement. No build-essential: everything
+# installed — ADK, LiteLLM, the MCP SDK, boto3 — ships prebuilt wheels for
+# this image.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
@@ -41,6 +42,8 @@ RUN pip install --upgrade pip && pip install .
 
 COPY app ./app
 COPY tests ./tests
+# The evidence capture (W1-10), runnable where the deployment's AWS credentials are.
+COPY scripts ./scripts
 COPY --from=frontend /build/app/static/web ./app/static/web
 
 # Drop privileges. This process writes nothing to disk — a visitor's session
@@ -55,8 +58,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://localhost:8090/healthz || exit 1
 
 # **One worker, deliberately**, for the reason `fanmoot-mcp` gives for its own:
-# from W1 a visitor's MCP session, agent state and WebSocket all live in this
-# process's memory, and a second worker would be a second, disjoint memory.
+# a visitor's MCP session, agent state and WebSocket all live in this
+# process's memory, and a second worker would be a second, disjoint memory —
+# a resumed socket landing on the other one would find no session.
 # Scaling out is W6-2's decision, made with load numbers in hand.
 CMD ["gunicorn", "app.main:app", \
     "-k", "uvicorn.workers.UvicornWorker", \

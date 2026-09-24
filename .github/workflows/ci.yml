@@ -5,8 +5,10 @@
 # bundle (tests/conftest.py writes its own), and the SPA's type check needs no
 # Python. Side by side, the slower of the two is the whole wait.
 #
-# No network in either. The suite substitutes the one outbound call W0 makes,
-# so a red run is this repo's fault and never mcp.fanmoot.com's.
+# No network in either. The suite runs against its own MCP server on a
+# loopback port, a scripted model and a faked authorization server, so a red
+# run is this repo's fault and never mcp.fanmoot.com's. The live scenario
+# (`make test-live`) is deselected here by pyproject's `-m 'not live'`.
 
 name: check
 
@@ -35,7 +37,8 @@ permissions:
 jobs:
   server:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # ADK and LiteLLM are a large install even with uv's cache.
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -59,7 +62,7 @@ jobs:
           .venv/bin/ruff format --check .
 
       - name: Types
-        run: .venv/bin/mypy app
+        run: .venv/bin/mypy app scripts
 
       - name: Tests
         run: .venv/bin/pytest -q

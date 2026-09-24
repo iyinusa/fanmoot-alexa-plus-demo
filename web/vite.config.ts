@@ -45,6 +45,10 @@ export default defineConfig({
       '/ws': { target: 'ws://127.0.0.1:8090', ws: true },
       '/healthz': 'http://127.0.0.1:8090',
       '/api': 'http://127.0.0.1:8090',
+      // The sign-in popup's start, callback and client metadata (W1-7).
+      '/oauth': 'http://127.0.0.1:8090',
+      // The sandbox proxy the server's ui:// views render inside (W2-6).
+      '/sandbox': 'http://127.0.0.1:8090',
     },
   },
 })

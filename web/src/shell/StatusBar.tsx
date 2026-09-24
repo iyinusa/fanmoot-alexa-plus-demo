@@ -1,8 +1,13 @@
 /**
  * The strip along the top of the screen: the time, the ticker (W2-7), and who
  * the fan is — with sign-in, the demo account and sign-out one tap away.
+ *
+ * The account control is a disclosure, not an ARIA menu (W5-5): a `menu`
+ * role promises arrow-key navigation, and two buttons are better served by
+ * Tab. Opening it puts focus on the first choice; Escape closes it and
+ * returns focus to the button.
  */
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, m } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
 
 import type { Ambient, AuthState } from '@/lib/protocol'
@@ -44,11 +49,19 @@ export function StatusBar({
   const now = useClock()
   const [open, setOpen] = useState(false)
   const menu = useRef<HTMLDivElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (!open) return
+    menu.current?.querySelector<HTMLElement>('[data-choice]')?.focus()
     const close = (event: MouseEvent | KeyboardEvent) => {
-      if (event instanceof KeyboardEvent ? event.key === 'Escape' : !menu.current?.contains(event.target as Node)) setOpen(false)
+      if (event instanceof KeyboardEvent) {
+        if (event.key !== 'Escape') return
+        setOpen(false)
+        trigger.current?.focus()
+      } else if (!menu.current?.contains(event.target as Node)) {
+        setOpen(false)
+      }
     }
     document.addEventListener('mousedown', close)
     document.addEventListener('keydown', close)
@@ -78,10 +91,11 @@ export function StatusBar({
 
       <div ref={menu} className="relative shrink-0">
         <button
+          ref={trigger}
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          aria-haspopup="menu"
+          aria-controls="account-panel"
           className="flex items-center gap-1.5 rounded-full border border-line bg-surface/70 py-1 pl-1 pr-2.5 text-xs text-ink hover:bg-raised"
         >
           <span
@@ -93,13 +107,13 @@ export function StatusBar({
             {who.replace('@', '').charAt(0).toUpperCase()}
           </span>
           <span className="max-w-[9rem] truncate">{who}</span>
-          <span className="sr-only">— account menu</span>
+          <span className="sr-only">, account</span>
         </button>
 
         <AnimatePresence>
           {open && (
-            <motion.div
-              role="menu"
+            <m.div
+              id="account-panel"
               initial={{ opacity: 0, y: -4, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -4 }}
@@ -137,7 +151,7 @@ export function StatusBar({
                   </MenuItem>
                 </>
               )}
-            </motion.div>
+            </m.div>
           )}
         </AnimatePresence>
       </div>
@@ -147,7 +161,7 @@ export function StatusBar({
 
 function MenuItem({ children, onClick }: { children: string; onClick: () => void }) {
   return (
-    <button type="button" role="menuitem" onClick={onClick} className="block w-full rounded-fm-sm px-2 py-2 text-left hover:bg-surface">
+    <button type="button" data-choice onClick={onClick} className="block w-full rounded-fm-sm px-2 py-2 text-left hover:bg-surface">
       {children}
     </button>
   )

@@ -8,7 +8,7 @@
  * Two sizes: one match at a time in the status bar, rotating; and the board
  * on the home screen.
  */
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, m } from 'framer-motion'
 import { useEffect, useState } from 'react'
 
 import type { Ambient, TickerMatch, TickerSide } from '@/lib/protocol'
@@ -70,7 +70,7 @@ function Score({ match, live }: { match: TickerMatch; live: boolean }) {
   const text = `${match.home?.score ?? 0}–${match.away?.score ?? 0}`
   return (
     <AnimatePresence mode="popLayout" initial={false}>
-      <motion.span
+      <m.span
         key={text}
         initial={{ scale: 1.5, color: 'var(--fm-green-bright)' }}
         animate={{ scale: 1, color: 'var(--fm-text)' }}
@@ -78,7 +78,7 @@ function Score({ match, live }: { match: TickerMatch; live: boolean }) {
         className="fm-score inline-block"
       >
         {text}
-      </motion.span>
+      </m.span>
     </AnimatePresence>
   )
 }
@@ -134,7 +134,7 @@ export function TickerCompact({ ambient }: { ambient: Ambient | null }) {
         {live ? 'Live' : 'Next'}
       </span>
       <AnimatePresence mode="wait" initial={false}>
-        <motion.span
+        <m.span
           key={match.id}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -144,7 +144,7 @@ export function TickerCompact({ ambient }: { ambient: Ambient | null }) {
         >
           <Line match={match} live={live} size={16} compact />
           <span className="shrink-0 text-muted">{live ? clockOf(match) : kickoffOf(match)}</span>
-        </motion.span>
+        </m.span>
       </AnimatePresence>
     </div>
   )
@@ -162,7 +162,7 @@ export function TickerBoard({ ambient }: { ambient: Ambient | null }) {
       </h2>
       <ul className="divide-y divide-line overflow-hidden rounded-fm-lg border border-line bg-surface/70 backdrop-blur">
         {matches.map((match, i) => (
-          <motion.li
+          <m.li
             key={match.id}
             initial={{ opacity: 0, x: -10 }}
             animate={{ opacity: 1, x: 0 }}
@@ -175,7 +175,7 @@ export function TickerBoard({ ambient }: { ambient: Ambient | null }) {
             <span className={`shrink-0 text-xs ${live ? 'font-bold text-[var(--fm-green-bright)]' : 'text-muted'}`}>
               {live ? clockOf(match) : kickoffOf(match)}
             </span>
-          </motion.li>
+          </m.li>
         ))}
       </ul>
     </section>

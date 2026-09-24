@@ -16,7 +16,7 @@ BRAND_FILES := src/styles/tokens.css src/styles/fonts.css \
 	public/fonts/lato-700.woff2 public/fonts/lato-900.woff2 public/theme.js
 
 .DEFAULT_GOAL := help
-.PHONY: help install web-install dev dev-web test test-live evidence lint fmt types typecheck-web check build-web brand-check brand-sync build up down logs shell clean
+.PHONY: help install web-install dev dev-web test test-live evidence lint fmt types typecheck-web check build-web bundle-budget share-image brand-check brand-sync build up down logs shell clean
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -62,8 +62,16 @@ typecheck-web:  ## Type-check the SPA with tsc -b
 
 check: lint types typecheck-web test  ## Everything CI runs — must pass before ticking a milestone task
 
-build-web:  ## Build the SPA into app/static/web
+build-web:  ## Build the SPA into app/static/web (fails if the JS is over budget, W5-3)
 	cd web && npm run build
+
+# The budget is a Vite plugin (web/budget.ts), so every build enforces it —
+# this one, CI's and the Docker image's. This target is for reading the report.
+bundle-budget:  ## Build the SPA and print its gzipped JS against the budget (W5-3)
+	cd web && npx vite build 2>&1 | sed -n '/critical path/,/^computing/p' | grep -v '^computing'
+
+share-image:  ## Redraw the link-preview image, web/public/share/og.png, with headless Chrome (W5-6)
+	$(PY) scripts/make_share_image.py
 
 brand-check:  ## Fail if the Floodlit tokens, fonts or theme script drifted from fanmoot
 	@test -d "$(FANMOOT_WEB)" || (echo "no fanmoot checkout at $(FANMOOT_WEB) — set FANMOOT_WEB=…"; exit 1)

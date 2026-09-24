@@ -8,12 +8,14 @@ by calling the real [Fanmoot MCP server](https://mcp.fanmoot.com/mcp). A trace
 beside the conversation shows every MCP frame, OAuth request and model call as
 it happens.
 
-> **Status: the trace inspector (W3).** A real ADK agent, Bedrock first, drives
-> a real MCP session against `mcp.fanmoot.com` and signs fans in through a real
-> OAuth 2.1 flow. The browser shows it as a smart display: voice in and out,
-> captions, the server's own cards, and live scores in the corner. Beside it,
-> the trace inspector shows every frame of that session. Guided scenarios (W4)
-> come next.
+> **Status: polished (W5), deployment (W6) next.** A real ADK agent, Bedrock
+> first, drives a real MCP session against `mcp.fanmoot.com` and signs fans in
+> through a real OAuth 2.1 flow. The browser shows it as a smart display: voice
+> in and out, captions, the server's own cards, and live scores in the corner.
+> Beside it, the trace inspector shows every frame of that session. Guided
+> scenarios, written each day from what is actually on, walk a visitor through
+> it. Lighthouse scores 95 or more in every category on a throttled phone
+> (measured against a local production build; to re-check once deployed).
 
 ## Why a simulation
 
@@ -84,6 +86,32 @@ browser ──/ws──▶ FastAPI (this repo) ──Streamable HTTP──▶ mc
   session calls `live_scores` on a timer. With nothing in play it calls
   `upcoming_matches` instead. These calls appear on the trace marked
   `ambient`, and calls made by a card are marked `view`.
+- **A first screen that explains itself.** A first visit opens on the
+  device's own welcome screen: what the demo is, that everything but the
+  device is real (with the live connection to `mcp.fanmoot.com` shown under
+  it), and where the trace is. "Take the tour" starts the first guided
+  scenario as a real turn. The ⓘ button in the header brings the screen back.
+- **Failure in the device's own voice.** A turn that fails is answered with an
+  apology Alexa says out loud, and the error code sits in small print under
+  it. Offline, disconnected, out of date, timed out or full, the device shows
+  a screen of its own, with the light pulsing amber, a countdown and a way on.
+  A render error shows a restart screen, never a blank page.
+- **Keyboard and screen reader.** Everything is reachable by Tab, with a skip
+  link first and `/` to jump to the question box. Tabs take arrow keys, the
+  trace sheet keeps focus inside it and returns it on close, and each finished
+  answer is announced once rather than word by word. Captions are on by
+  default. Reduced motion stops every animation, including the waveform and
+  the light.
+- **Fast on a phone, and kept that way.** The bundle is gzipped on the way
+  out. The trace inspector, the cards and Framer Motion's layout and drag
+  features load after the first paint. A Vite plugin (`web/budget.ts`) fails
+  any build whose critical-path JavaScript goes over 100 KB gzipped, or any
+  chunk over 60 KB: on a laptop, in CI and in the Docker image alike.
+- **A link that looks deliberate.** Open Graph and X card tags, with the
+  image's absolute URL written from `FMD_PUBLIC_BASE_URL` as the page is
+  served, so staging previews point at staging. `make share-image` redraws
+  the 1200 × 630 image from an HTML template in the brand's own colours and
+  fonts, using headless Chrome.
 - **One image, two stages.** A Node stage builds the React app, and a Python
   stage serves it with the agent from one FastAPI process. One origin, one
   route, no CORS.
@@ -118,7 +146,9 @@ make up                 # http://localhost:8090
 | `make check` | Everything CI runs: ruff, `mypy --strict`, `tsc -b`, pytest |
 | `make test-live` | The multi-turn scenario against the deployed MCP server. Add `FMD_LIVE_MODEL=1` for a real-model run |
 | `make evidence` | A Bedrock-only run of that scenario, saved to `evidence/` |
-| `make build-web` | Build the SPA into `app/static/web` |
+| `make build-web` | Build the SPA into `app/static/web`. Fails if the JavaScript is over budget |
+| `make bundle-budget` | Build, and print the gzipped JavaScript against its budget |
+| `make share-image` | Redraw the link-preview image, `web/public/share/og.png`, with headless Chrome |
 | `make brand-check` | Diff the Floodlit tokens and fonts against a sibling `fanmoot` checkout |
 | `make help` | Every target |
 

@@ -7,28 +7,52 @@
  * device, the wake word, the voice. The agent, the MCP session, the OAuth
  * grant, the cards and the posts are real (§2.0 of the plan), and the trace
  * inspector beside the device shows every frame that proves it (W3).
+ *
+ * W5 is the polish around it: a landing screen for a judge who arrives with
+ * no context (`Intro`), the device's own screens for being offline or out of
+ * date (`Fault`), apologies in Alexa's voice rather than error banners, an
+ * entrance, keyboard access to everything, a screen-reader announcement of
+ * each finished answer, and the cards and trace loaded off the first paint.
  */
-import { AnimatePresence, motion } from 'framer-motion'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { AnimatePresence, m } from 'framer-motion'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 
 import { Captions } from '@/conversation/Captions'
 import { Composer } from '@/conversation/Composer'
 import { Guide } from '@/conversation/Guide'
 import { Turns } from '@/conversation/Turns'
+import { noticeFor, turnApology } from '@/lib/faults'
 import { useGuide } from '@/lib/guide'
 import { useDemoSession } from '@/lib/socket'
 import { completeSentences, useListener, useSpeaker } from '@/lib/speech'
 import { useTheme } from '@/lib/theme'
 import { Device } from '@/shell/Device'
+import { Fault, useFault, useOnline } from '@/shell/Fault'
 import { Home } from '@/shell/Home'
-import { AlertIcon, CloseIcon, ResetIcon } from '@/shell/Icons'
+import { AlertIcon, CloseIcon, InfoIcon, ResetIcon } from '@/shell/Icons'
+import { Intro, useIntro } from '@/shell/Intro'
 import { LinkPrompt } from '@/shell/LinkPrompt'
 import { StatusBar } from '@/shell/StatusBar'
 import { type VoiceMode, Waveform } from '@/shell/Waveform'
-import { TraceButton, TraceColumn, TraceSheet, useTracePanel } from '@/trace/TracePanel'
-import { CardStack } from '@/views/CardStack'
+import { prefetchTrace, TraceButton, TraceColumn, TraceSheet, useTracePanel } from '@/trace/TracePanel'
 
 const EASE = [0.22, 1, 0.36, 1] as const
+
+/** Who made it, in the footer. */
+const CREDITS = [
+  { label: 'LinkedIn', href: 'https://linkedin.com/in/iyinusa' },
+  { label: 'X', href: 'https://x.com/ikyinusa' },
+  { label: 'YouTube', href: 'https://youtube.com/@iyinusa' },
+]
+
+/** The cards, and the view host behind them, off the critical path (W5-3). */
+const loadCards = () => import('@/views/CardStack')
+const CardStack = lazy(() => loadCards().then((mod) => ({ default: mod.CardStack })))
+
+/** Nothing in the page is being typed into: "/" is free to mean "focus the question". */
+function typingSomewhere(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))
+}
 
 export function AlexaShell() {
   const demo = useDemoSession()
@@ -42,12 +66,19 @@ export function AlexaShell() {
 
   const last = demo.turns.at(-1)
   const running = last?.status === 'running'
+  const online = useOnline()
+  const fault = useFault({ status: demo.status, fault: demo.fault, online })
+  const intro = useIntro(demo.turns.length > 0)
 
   // ── Asking: typed, tapped, spoken, or from a card's `ui/message` ─────────
+  // False when there was no connection to send it on (W5-4): the caller keeps
+  // the words, and Alexa says she will be back.
   const ask = useCallback(
-    (text: string) => {
+    (text: string): boolean => {
       speaker.stop() // barge-in: a fan who talks over Alexa is heard
-      demo.ask(text)
+      const sent = demo.ask(text)
+      if (!sent) setNotice({ text: noticeFor('offline_ask', ''), tone: 'error' })
+      return sent
     },
     [demo.ask, speaker.stop],
   )
@@ -65,8 +96,15 @@ export function AlexaShell() {
   const toggleListening = useCallback(() => {
     if (micMuted) return
     speaker.stop()
+    intro.close()
     listener.toggle()
-  }, [micMuted, listener.toggle, speaker.stop])
+  }, [micMuted, listener.toggle, speaker.stop, intro.close])
+
+  // Asking anything, by any route, is past the introduction.
+  const turnCount = demo.turns.length
+  useEffect(() => {
+    if (turnCount > 0) intro.close()
+  }, [turnCount, intro.close])
 
   useEffect(() => {
     if (micMuted) listener.stop()
@@ -90,9 +128,20 @@ export function AlexaShell() {
     track.next = next
     if (last.status !== 'running') {
       if (last.status === 'ok') speaker.say(last.reply.slice(track.next).trim())
+      // A failed turn is apologised for out loud, as the device would (W5-4).
+      if (last.status === 'error' && last.error) speaker.say(turnApology(last.errorCode))
       track.done = true
     }
-  }, [last?.id, last?.reply, last?.status, speaker.say, speaker.stop])
+  }, [last?.id, last?.reply, last?.status, last?.error, last?.errorCode, speaker.say, speaker.stop])
+
+  // ── What a screen reader hears (W5-5) ─────────────────────────────────────
+  // Each answer once, when it is finished — not every word as it streams.
+  const [announcement, setAnnouncement] = useState('')
+  useEffect(() => {
+    if (!last || last.status === 'running') return
+    const said = last.status === 'error' && last.error ? turnApology(last.errorCode) : last.reply
+    if (said) setAnnouncement(`Alexa: ${said}`)
+  }, [last?.id, last?.status, last?.reply, last?.error, last?.errorCode])
 
   // A caption lingers a moment after the voice stops, then clears.
   useEffect(() => {
@@ -103,11 +152,22 @@ export function AlexaShell() {
 
   // ── What the device is doing, for the light and the waveform ──────────────
   const mode: VoiceMode =
-    listener.state === 'listening' ? 'listening' : speaker.speaking ? 'speaking' : running ? 'thinking' : 'idle'
+    fault === 'offline' || fault === 'disconnected' || fault === 'capacity'
+      ? 'connecting'
+      : listener.state === 'listening'
+        ? 'listening'
+        : speaker.speaking
+          ? 'speaking'
+          : running
+            ? 'thinking'
+            : 'idle'
 
   // ── Things worth a line on the screen ─────────────────────────────────────
+  // A failed turn is not a notice: Alexa answers it with an apology in the
+  // conversation, and says it (W5-4).
   useEffect(() => {
-    if (demo.error && demo.error.code !== 'busy') setNotice({ text: demo.error.message, tone: 'error' })
+    const error = demo.error as { code: string; message: string; turn_id?: string } | null
+    if (error && error.code !== 'busy' && !error.turn_id) setNotice({ text: noticeFor(error.code, error.message), tone: 'error' })
   }, [demo.error])
   useEffect(() => {
     if (listener.error) setNotice({ text: listener.error, tone: 'error' })
@@ -131,6 +191,34 @@ export function AlexaShell() {
       return true
     },
     [running, ask],
+  )
+
+  // ── The keyboard (W5-5) ───────────────────────────────────────────────────
+  // "/" goes to the question, from anywhere that is not already a text field.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey || typingSomewhere(event.target)) return
+      event.preventDefault()
+      document.getElementById('ask')?.focus()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // ── Off the critical path, but ready before they are wanted (W5-3) ─────────
+  useEffect(() => {
+    prefetchTrace()
+    const idle = window.requestIdleCallback ?? ((run: () => void) => window.setTimeout(run, 1500))
+    idle(() => void loadCards())
+  }, [])
+
+  // ── The landing screen's way in (W5-1) ────────────────────────────────────
+  const startTour = useCallback(
+    (scenario: (typeof scenarios)[number]) => {
+      intro.close()
+      guide.start(scenario)
+    },
+    [intro.close, guide.start],
   )
 
   // ── Start over (W4-7) ─────────────────────────────────────────────────────
@@ -164,15 +252,40 @@ export function AlexaShell() {
 
   return (
     <>
-      <header className="mx-auto mb-4 flex w-full max-w-[1480px] items-center gap-3 sm:mb-6">
+      <a
+        href="#ask"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[60] focus:rounded-full focus:bg-[var(--fm-blue)] focus:px-4 focus:py-2 focus:text-sm focus:font-bold focus:text-white"
+      >
+        Skip to the question box
+      </a>
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {announcement}
+      </div>
+      <m.header
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: EASE }}
+        className="mx-auto mb-4 flex w-full max-w-[1480px] items-center gap-3 sm:mb-6"
+      >
         <img src="/icons/icon-192.png" alt="" width={36} height={36} className="rounded-fm-sm" />
+        {/* On a phone the lockup stacks, and the strapline gives way to the
+            header's buttons rather than being cut to "Where fans d…". */}
         <div className="min-w-0">
           <h1 className="text-lg leading-tight">
-            Fanmoot <span className="font-light text-muted">on Alexa+</span>
+            Fanmoot <span className="font-light text-muted max-sm:block max-sm:text-sm">on Alexa+</span>
           </h1>
-          <p className="truncate text-xs text-muted">Where fans debate football — now by voice.</p>
+          <p className="truncate text-xs text-muted max-sm:hidden">Where fans debate football — now by voice.</p>
         </div>
         <span className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={intro.show}
+            aria-label="What is this demo?"
+            title="What is this demo?"
+            className="grid size-9 place-items-center rounded-full border border-line text-muted transition-colors hover:border-[var(--fm-accent)] hover:text-ink"
+          >
+            <InfoIcon size={17} />
+          </button>
           <button
             type="button"
             onClick={reset}
@@ -186,13 +299,21 @@ export function AlexaShell() {
             <TraceButton count={demo.trace.length} connected={trace.connected} onClick={() => panel.setSheet(true)} />
           )}
         </span>
-      </header>
+      </m.header>
       <div
         className={`mx-auto grid w-full max-w-[1480px] gap-5 xl:items-start ${
           panel.column ? 'xl:grid-cols-[minmax(0,1fr)_420px]' : 'xl:grid-cols-[minmax(0,1fr)_44px]'
         }`}
       >
-        <div className="min-w-0 space-y-4">
+        {/* Transform only, no fade: the landing headline inside is the page's
+            largest paint, and an element fading in from nothing is painted
+            late (W5-3). */}
+        <m.div
+          initial={{ y: 18, scale: 0.99 }}
+          animate={{ y: 0, scale: 1 }}
+          transition={{ duration: 0.7, ease: EASE }}
+          className="min-w-0 space-y-4"
+        >
           <Device
             mode={mode}
             volume={speaker.volume}
@@ -212,9 +333,26 @@ export function AlexaShell() {
                 showTicker={hasTurns}
               />
 
+              <Fault kind={fault} retryAt={demo.retryAt} reconnect={demo.reconnect} />
+
+              <AnimatePresence>
+                {intro.open && !fault && (
+                  <Intro
+                    facts={demo.facts}
+                    connected={trace.connected}
+                    wide={panel.wide}
+                    scenarios={scenarios}
+                    canListen={listener.supported}
+                    recalled={intro.recalled}
+                    onTour={startTour}
+                    onClose={intro.close}
+                  />
+                )}
+              </AnimatePresence>
+
               <AnimatePresence>
                 {notice && (
-                  <motion.div
+                  <m.div
                     role={notice.tone === 'error' ? 'alert' : 'status'}
                     initial={{ opacity: 0, y: -8 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -226,14 +364,14 @@ export function AlexaShell() {
                     <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss" className="text-faint hover:text-ink">
                       <CloseIcon size={14} />
                     </button>
-                  </motion.div>
+                  </m.div>
                 )}
               </AnimatePresence>
 
               <div className="relative min-h-0 flex-1">
                 <AnimatePresence mode="wait" initial={false}>
                   {!hasTurns ? (
-                    <motion.div
+                    <m.div
                       key="home"
                       className="absolute inset-0"
                       initial={{ opacity: 0 }}
@@ -246,9 +384,9 @@ export function AlexaShell() {
                         canListen={listener.supported}
                         lines={scenarios.map((scenario) => scenario.steps[0] ?? '').filter(Boolean)}
                       />
-                    </motion.div>
+                    </m.div>
                   ) : (
-                    <motion.div
+                    <m.div
                       key="conversation"
                       className={`absolute inset-0 overflow-y-auto @3xl:grid @3xl:gap-6 @3xl:overflow-hidden @3xl:px-5 ${
                         hasCards && !expanded ? '@3xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]' : '@3xl:grid-cols-1'
@@ -274,6 +412,7 @@ export function AlexaShell() {
                       )}
                       {hasCards && (
                         <div className={`px-4 pb-24 pt-2 @3xl:px-1 ${expanded ? 'h-full' : '@3xl:h-full @3xl:overflow-y-auto'}`}>
+                          <Suspense fallback={<div className="h-64 animate-pulse rounded-fm-lg border border-line bg-surface/60" />}>
                           <CardStack
                             cards={demo.cards}
                             resources={demo.views}
@@ -284,16 +423,17 @@ export function AlexaShell() {
                             expanded={expanded}
                             onExpand={setExpanded}
                           />
+                          </Suspense>
                         </div>
                       )}
-                    </motion.div>
+                    </m.div>
                   )}
                 </AnimatePresence>
 
                 {/* Listening: what is being heard, big, over everything (W2-4). */}
                 <AnimatePresence>
                   {listener.state === 'listening' && (
-                    <motion.div
+                    <m.div
                       key="listening"
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
@@ -302,10 +442,14 @@ export function AlexaShell() {
                       className="absolute inset-0 z-20 flex flex-col items-center justify-end gap-5 bg-gradient-to-t from-[var(--fm-bg)] via-[var(--fm-bg)]/85 to-transparent px-6 pb-12"
                     >
                       <p className="max-w-2xl text-center text-2xl font-light leading-snug text-ink @3xl:text-4xl" aria-live="polite">
-                        {listener.interim || <span className="text-muted">Listening…</span>}
+                        {listener.asking ? (
+                          <span className="text-muted">Allow the microphone when your browser asks…</span>
+                        ) : (
+                          listener.interim || <span className="text-muted">Listening…</span>
+                        )}
                       </p>
                       <Waveform mode="listening" className="h-14 w-64 @3xl:w-80" />
-                    </motion.div>
+                    </m.div>
                   )}
                 </AnimatePresence>
 
@@ -332,7 +476,11 @@ export function AlexaShell() {
             </div>
           </Device>
 
-          <div className="max-md:sticky max-md:bottom-0 max-md:z-40 max-md:-mx-4 max-md:border-t max-md:border-line max-md:bg-bg/90 max-md:px-4 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom))] max-md:pt-3 max-md:backdrop-blur md:mx-auto md:max-w-4xl">
+          <m.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease: EASE, delay: 0.15 }}
+            className="max-md:sticky max-md:bottom-0 max-md:z-40 max-md:-mx-4 max-md:border-t max-md:border-line max-md:bg-bg/90 max-md:px-4 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom))] max-md:pt-3 max-md:backdrop-blur md:mx-auto md:max-w-4xl">
             <Composer
               running={running}
               listening={listener.state === 'listening'}
@@ -359,19 +507,44 @@ export function AlexaShell() {
                 signIn={demo.signIn}
               />
             </Composer>
-          </div>
+          </m.div>
 
-          <p className="mx-auto max-w-3xl px-2 text-center text-xs leading-relaxed text-faint">
-            Alexa+ experience simulated — the Alexa+ Add-on toolkit is in preview and not available to hackathon
-            participants. The agent, the Fanmoot MCP server, the sign-in and every post are real. Not made or endorsed by
-            Amazon.
-          </p>
-        </div>
+          {/* text-muted, not faint: at this size faint misses WCAG AA on the dark ground (W5-5). */}
+          <footer className="mx-auto max-w-3xl space-y-1.5 px-2 text-center text-xs leading-relaxed text-muted">
+            <p>
+              Alexa+ experience simulated — the Alexa+ Add-on toolkit is in preview. The agent, the Fanmoot MCP server,
+              the sign-in and every post are real. Not made or endorsed by Amazon.
+            </p>
+            <p>
+              Designed by <span className="text-ink">Kennedy Yinusa</span>
+              {CREDITS.map((credit) => (
+                <span key={credit.href}>
+                  <span aria-hidden="true"> · </span>
+                  <a
+                    href={credit.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Kennedy Yinusa on ${credit.label}`}
+                    className="text-accent underline-offset-2 hover:underline"
+                  >
+                    {credit.label}
+                  </a>
+                </span>
+              ))}
+            </p>
+          </footer>
+        </m.div>
 
         {panel.wide && (
-          <aside className="sticky top-6 h-[calc(100dvh-7rem)] min-h-[32rem] min-w-0">
-            <TraceColumn data={trace} open={panel.column} setOpen={panel.setColumnOpen} />
-          </aside>
+          <m.aside
+            aria-label="MCP trace inspector"
+            initial={{ opacity: 0, x: 24 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.6, ease: EASE, delay: 0.2 }}
+            className="sticky top-6 h-[calc(100dvh-7rem)] min-h-[32rem] min-w-0"
+          >
+            <TraceColumn data={trace} open={panel.column} setOpen={panel.setColumnOpen} spotlight={intro.open && !fault} />
+          </m.aside>
         )}
       </div>
       {!panel.wide && <TraceSheet data={trace} open={panel.sheet} onClose={closeSheet} />}

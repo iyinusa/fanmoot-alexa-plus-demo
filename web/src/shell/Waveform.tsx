@@ -13,11 +13,13 @@ import { useEffect, useRef } from 'react'
 
 import { fill } from '@/lib/meter'
 
-export type VoiceMode = 'idle' | 'listening' | 'thinking' | 'speaking' | 'muted'
+/** `connecting`: the device has lost its connection (W5-4). The light pulses amber; the bars rest. */
+export type VoiceMode = 'idle' | 'listening' | 'thinking' | 'speaking' | 'muted' | 'connecting'
 
 const FLOOR: Record<VoiceMode, number> = {
   idle: 0,
   muted: 0,
+  connecting: 0,
   listening: 0.1,
   thinking: 0.16,
   speaking: 0.14,
@@ -91,7 +93,7 @@ export function Waveform({
         context.fill()
       }
 
-      if (!still && mode !== 'idle' && mode !== 'muted') frame = requestAnimationFrame(draw)
+      if (!still && mode !== 'idle' && mode !== 'muted' && mode !== 'connecting') frame = requestAnimationFrame(draw)
     }
 
     frame = requestAnimationFrame(draw)

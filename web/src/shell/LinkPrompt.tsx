@@ -7,8 +7,13 @@
  * In the "New here" scenario (W4-5) it leads with creating an account: the
  * popup opens on Fanmoot's own sign-up form (`prompt=create`), and the shared
  * demo account is not offered, because the point is a fan of their own.
+ *
+ * Keyboard (W5-5): the card takes focus when it appears, on its main button,
+ * because a keyboard or screen-reader user would otherwise not know it had.
+ * Escape is "Not now", and focus goes back to the typed field when it closes.
  */
-import { motion } from 'framer-motion'
+import { m } from 'framer-motion'
+import { useEffect, useRef } from 'react'
 
 import type { AuthRequired } from '@/lib/socket'
 import type { AuthState } from '@/lib/protocol'
@@ -31,11 +36,27 @@ export function LinkPrompt({
 }) {
   const scoped = required.status === 403 && auth?.mode === 'linked'
   const joining = signup && !scoped
+  const card = useRef<HTMLDivElement>(null)
+  const primary = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    primary.current?.focus({ preventScroll: true })
+    const node = card.current
+    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && dismiss()
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      if (node?.contains(document.activeElement)) document.getElementById('ask')?.focus({ preventScroll: true })
+    }
+  }, [dismiss])
+
   return (
-    <motion.div
+    <m.div
+      ref={card}
       role="dialog"
       aria-modal="false"
       aria-labelledby="link-title"
+      aria-describedby="link-body"
       initial={{ opacity: 0, y: 24, scale: 0.97 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 12, scale: 0.98 }}
@@ -57,7 +78,7 @@ export function LinkPrompt({
           </p>
         </div>
       </div>
-      <p className="mt-3 text-sm text-muted">
+      <p id="link-body" className="mt-3 text-sm text-muted">
         {scoped
           ? `This sign-in did not grant ${required.scope ?? 'that permission'}. Sign in again and allow it.`
           : joining
@@ -66,6 +87,7 @@ export function LinkPrompt({
       </p>
       <div className="mt-4 flex flex-wrap gap-2">
         <button
+          ref={primary}
           type="button"
           onClick={() => signIn({ signup: joining })}
           className="fm-tap rounded-fm-sm bg-[var(--fm-blue)] px-4 font-bold text-white hover:bg-[var(--fm-blue-deep)]"
@@ -83,6 +105,6 @@ export function LinkPrompt({
           </button>
         )}
       </div>
-    </motion.div>
+    </m.div>
   )
 }

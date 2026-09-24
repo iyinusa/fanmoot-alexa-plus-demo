@@ -1,33 +1,72 @@
 <!doctype html>
 <!-- Dark unless the visitor chose otherwise, set in the markup so the first
      paint is already right. Floodlit is dark-first (tokens.css). -->
-<html lang="en" data-theme="dark">
+<html lang="en-GB" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Fanmoot on Alexa+ — where fans debate football, by voice</title>
     <meta
       name="description"
-      content="Ask about a match out loud and hear what fans are saying — Fanmoot's MCP server, driven by voice, with every frame on show."
+      content="Ask Alexa about a match and hear what football fans are saying, then have your say. A working Alexa+ experience for Fanmoot: a real agent, a real MCP server and every frame on show."
     />
     <!-- A file, not inline, so the CSP can say script-src 'self' (app/middleware.py). -->
     <script src="/theme.js"></script>
 
     <meta name="theme-color" content="#0b0f14" />
+    <meta name="color-scheme" content="dark light" />
     <link rel="icon" href="/icons/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
 
+    <!-- The share link (W5-6). Open Graph wants absolute URLs, and this file
+         cannot know its own origin, so app/spa.py writes FMD_PUBLIC_BASE_URL
+         over the placeholder origin as it serves the page. The image is
+         made by `make share-image`. -->
+    <link rel="canonical" href="__FMD_PUBLIC_URL__/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Fanmoot" />
+    <meta property="og:locale" content="en_GB" />
+    <meta property="og:url" content="__FMD_PUBLIC_URL__/" />
+    <meta property="og:title" content="Fanmoot on Alexa+ — where fans debate football, by voice" />
+    <meta
+      property="og:description"
+      content="Ask about a match, hear what the fans are saying, and post your own take by voice. A real agent on a real MCP server, with every frame on show."
+    />
+    <meta property="og:image" content="__FMD_PUBLIC_URL__/share/og.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Fanmoot on Alexa+: a smart display answering a football question, beside a live trace of the MCP calls behind the answer."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Fanmoot on Alexa+" />
+    <meta
+      name="twitter:description"
+      content="Where fans debate football, now by voice. A real agent on a real MCP server, with every frame on show."
+    />
+    <meta name="twitter:image" content="__FMD_PUBLIC_URL__/share/og.png" />
+    <meta
+      name="twitter:image:alt"
+      content="Fanmoot on Alexa+: a smart display answering a football question, beside a live trace of the MCP calls behind the answer."
+    />
+
     <!-- On the critical path; `crossorigin` is required even same-origin, or
-         the font downloads twice. -->
+         the font downloads twice. 300 is the landing headline's weight. -->
     <link rel="preload" href="/fonts/lato-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/lato-300.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/lato-900.woff2" as="font" type="font/woff2" crossorigin />
   </head>
   <body>
     <div id="root"></div>
     <noscript>
-      <div style="padding:2rem;font-family:system-ui">
+      <div style="padding:2rem;font-family:system-ui;max-width:40rem;color:#e8edf3;background:#0b0f14">
         <h1>Fanmoot on Alexa+</h1>
-        <p>The demo needs JavaScript.</p>
+        <p>
+          Ask Alexa about a football match and hear what fans are saying. The demo talks to a live agent over a
+          WebSocket, so it needs JavaScript switched on.
+        </p>
       </div>
     </noscript>
     <script type="module" src="/src/main.tsx"></script>

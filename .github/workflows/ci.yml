@@ -91,6 +91,7 @@ jobs:
         run: npx tsc -b
 
       # Beyond `tsc -b`: a Tailwind or import error fails here, not in the
-      # image build on the host.
+      # image build on the host. So does JavaScript over W5-3's budget — the
+      # budget is a Vite plugin (web/budget.ts), and it prints its report.
       - name: Build
         run: npx vite build

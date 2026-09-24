@@ -6,10 +6,21 @@
  * size; splitting them into words and letting each one settle in on its own
  * reads as speech rather than as a download. A word that grows across two
  * deltas ("Arse" → "Arsenal") keeps its place and does not animate twice.
+ *
+ * A turn that failed is answered in Alexa's own voice (W5-4): an apology
+ * that says what to do next, spoken like any reply, with the server's error
+ * code in small print underneath for anyone who wants it. Never a red
+ * banner, never a stack trace.
+ *
+ * Not a live region (W5-5). Announcing a reply word by word as it streams
+ * would read a screen-reader user every fragment; the shell announces each
+ * finished answer once instead.
  */
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, m } from 'framer-motion'
 import { memo, useEffect, useRef } from 'react'
 
+import { turnApology } from '@/lib/faults'
+import { scrollBehavior } from '@/lib/motion'
 import type { ToolCall, Turn } from '@/lib/socket'
 import { AlertIcon, CheckIcon } from '@/shell/Icons'
 
@@ -23,7 +34,7 @@ const Words = memo(function Words({ text, live }: { text: string; live: boolean 
         /^\s+$/.test(word) ? (
           ' '
         ) : (
-          <motion.span
+          <m.span
             key={i}
             initial={live ? { opacity: 0, y: 6, filter: 'blur(4px)' } : false}
             animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
@@ -31,7 +42,7 @@ const Words = memo(function Words({ text, live }: { text: string; live: boolean 
             className="inline-block"
           >
             {word}
-          </motion.span>
+          </m.span>
         ),
       )}
     </>
@@ -46,7 +57,7 @@ function ToolChip({ call }: { call: ToolCall }) {
         ? 'border-line text-muted'
         : 'border-[var(--fm-accent)]/50 text-ink'
   return (
-    <motion.li
+    <m.li
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.22, ease: EASE }}
@@ -64,7 +75,7 @@ function ToolChip({ call }: { call: ToolCall }) {
       {call.write && <span className="text-[var(--fm-amber)]">write</span>}
       {call.ms !== undefined && <span className="text-faint">{Math.round(call.ms)} ms</span>}
       <span className="sr-only">{call.status === 'running' ? 'running' : call.status === 'ok' ? 'done' : 'failed'}</span>
-    </motion.li>
+    </m.li>
   )
 }
 
@@ -72,7 +83,7 @@ function Thinking() {
   return (
     <span className="inline-flex items-center gap-1 py-2" aria-label="Alexa is thinking">
       {[0, 1, 2].map((i) => (
-        <motion.span
+        <m.span
           key={i}
           className="size-2 rounded-full bg-[var(--fm-accent)]"
           animate={{ opacity: [0.25, 1, 0.25], y: [0, -3, 0] }}
@@ -86,7 +97,7 @@ function Thinking() {
 function TurnView({ turn, latest }: { turn: Turn; latest: boolean }) {
   const live = turn.status === 'running'
   return (
-    <motion.li
+    <m.li
       initial={{ opacity: 0, y: 14 }}
       animate={{ opacity: latest ? 1 : 0.62, y: 0 }}
       transition={{ duration: 0.36, ease: EASE }}
@@ -112,9 +123,17 @@ function TurnView({ turn, latest }: { turn: Turn; latest: boolean }) {
       </div>
 
       {turn.error && (
-        <p className="flex items-center gap-1.5 text-sm text-[var(--fm-red)]" role="alert">
-          <AlertIcon size={14} /> {turn.error}
-        </p>
+        <m.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.32, ease: EASE }}
+          className="max-w-[94%] border-l-2 border-[var(--fm-amber)]/70 pl-3"
+        >
+          <p className="text-lg leading-relaxed text-ink sm:text-xl">{turnApology(turn.errorCode)}</p>
+          <p className="mt-0.5 text-[11px] text-faint">
+            <span className="font-mono">{turn.errorCode ?? 'error'}</span> · {turn.error}
+          </p>
+        </m.div>
       )}
 
       {turn.end?.model && (
@@ -123,7 +142,7 @@ function TurnView({ turn, latest }: { turn: Turn; latest: boolean }) {
           {turn.end.failovers.some((f) => f.fell_through) && ' · after a failover'} · {(turn.end.ms / 1000).toFixed(1)} s
         </p>
       )}
-    </motion.li>
+    </m.li>
   )
 }
 
@@ -144,11 +163,11 @@ export function Turns({ turns }: { turns: Turn[] }) {
   // window along on a laptop, where the device is only part of the page.
   useEffect(() => {
     const pane = scrollerOf(bottom.current)
-    pane?.scrollTo({ top: pane.scrollHeight, behavior: 'smooth' })
+    pane?.scrollTo({ top: pane.scrollHeight, behavior: scrollBehavior() })
   }, [turns.length, last?.reply.length, last?.tools.length])
 
   return (
-    <ol className="space-y-6" aria-live="polite" aria-relevant="additions text">
+    <ol className="space-y-6" aria-label="Conversation">
       <AnimatePresence initial={false}>
         {turns.map((turn, i) => (
           <TurnView key={turn.id} turn={turn} latest={i === turns.length - 1} />

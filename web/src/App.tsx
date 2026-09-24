@@ -1,8 +1,8 @@
 /**
  * Two routes. `/linked` is where the sign-in popup lands (W1-7); everything
  * else is the demo: the Alexa+ shell (W2) with the MCP trace inspector (W3)
- * beside it, and the landing state (W5-1) still to be designed properly for a
- * judge's first ten seconds.
+ * beside it. A first visit opens on the device's welcome screen (W5-1,
+ * `shell/Intro.tsx`).
  */
 import { FieldBackdrop } from '@/components/FieldBackdrop'
 import { Linked } from '@/components/Linked'

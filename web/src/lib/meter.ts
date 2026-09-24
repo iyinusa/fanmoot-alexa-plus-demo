@@ -75,24 +75,35 @@ export function fill(out: Float32Array, now: number, floor: number) {
   }
 }
 
+/** Touch devices do not get the meter's own capture (see `openMic`). */
+export function meterAllowed(): boolean {
+  return !window.matchMedia?.('(pointer: coarse)').matches
+}
+
 /**
- * Open the microphone for the meter. Resolves to a closer, or null when the
- * browser will not give it (no permission, no device, an insecure origin).
+ * What opening the microphone came to: a closer, or why not. `error` is the
+ * `getUserMedia` failure's name (`NotAllowedError`, `NotFoundError`,
+ * `NotReadableError`…), or `unavailable` where there is no `getUserMedia`
+ * at all (an insecure origin) or the meter is not used (touch).
+ */
+export type MicOpened = { close: () => void } | { error: string }
+
+/**
+ * Open the microphone for the meter.
  *
  * Not opened on touch devices: on mobile browsers a second capture of the
  * mic beside speech recognition can make recognition fail with
  * `audio-capture`, and hearing the fan matters more than drawing them.
  */
-export async function openMic(): Promise<(() => void) | null> {
-  if (!navigator.mediaDevices?.getUserMedia) return null
-  if (window.matchMedia?.('(pointer: coarse)').matches) return null
+export async function openMic(): Promise<MicOpened> {
+  if (!navigator.mediaDevices?.getUserMedia || !meterAllowed()) return { error: 'unavailable' }
   let stream: MediaStream
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true },
     })
-  } catch {
-    return null
+  } catch (error) {
+    return { error: error instanceof DOMException ? error.name : 'unavailable' }
   }
   const context = new AudioContext()
   const source = context.createMediaStreamSource(stream)
@@ -101,10 +112,12 @@ export async function openMic(): Promise<(() => void) | null> {
   node.smoothingTimeConstant = 0.72
   source.connect(node)
   attachAnalyser(node)
-  return () => {
-    if (analyser === node) attachAnalyser(null)
-    source.disconnect()
-    stream.getTracks().forEach((track) => track.stop())
-    void context.close()
+  return {
+    close: () => {
+      if (analyser === node) attachAnalyser(null)
+      source.disconnect()
+      stream.getTracks().forEach((track) => track.stop())
+      void context.close()
+    },
   }
 }

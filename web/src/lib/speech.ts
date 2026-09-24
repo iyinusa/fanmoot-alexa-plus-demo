@@ -8,6 +8,26 @@
  * exist, or the mic is refused, `supported` / `error` say so and the typed
  * field is the way in — the demo works in every browser and in a quiet room.
  *
+ * Getting the microphone to work, in order:
+ *
+ * 1. **A secure page.** Browsers only give the mic to `https://` or
+ *    `localhost`. A phone opening a laptop's `http://192.168…` address gets
+ *    nothing, and is told so, rather than an error that means nothing.
+ * 2. **One permission prompt, settled first.** On a desktop the meter opens
+ *    its own capture for the waveform. Started at the same moment as
+ *    recognition, the two ask for the mic together, and Chrome can fail the
+ *    recognition with `not-allowed` or `aborted` while its prompt is still
+ *    up. So until the mic has been granted, it is asked for first, on its
+ *    own, and recognition starts once the answer is in. Once granted, both
+ *    start together as before.
+ * 3. **Errors that name the fix.** `network` from Brave or an editor's
+ *    built-in browser means it has no speech service at all, not that the
+ *    connection dropped. `audio-capture` on a Mac is often the operating
+ *    system refusing the browser the mic. Each says where to go.
+ * 4. **English.** Recognition listens in the browser's own English, and in
+ *    British English for a browser set to any other language: Fanmoot's
+ *    names are English, and a French recogniser hears "Arsenal" as French.
+ *
  * **Out.** `useSpeaker` speaks sentences as they complete, so Alexa starts
  * talking while the rest of the answer is still streaming, and reports which
  * words have been said for the captions track. Captions are on by default:
@@ -15,7 +35,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { openMic, pulse } from '@/lib/meter'
+import { volumeTick } from '@/lib/earcon'
+import { meterAllowed, type MicOpened, openMic, pulse } from '@/lib/meter'
 
 // ── Types TypeScript's DOM lib does not carry ────────────────────────────────
 type Alternative = { transcript: string }
@@ -41,21 +62,74 @@ function recognitionCtor(): RecognitionCtor | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null
 }
 
-/** "Alexa, what's the score?" → "what's the score?" — and "Alexa" alone → "". */
+/**
+ * "Alexa, what's the score?" → "what's the score?" — and "Alexa" alone → "".
+ * Recognisers often mishear the wake word ("Alexis", "a Lexa"), so those go
+ * too. Not "yeah", which is how Chrome sometimes hears it: "Yeah, post it" is
+ * a real answer to Alexa's question, and must reach her whole.
+ */
 export function withoutWakeWord(text: string): string {
-  return text.replace(/^\s*(hey\s+)?alexa[\s,.!?]*/i, '').trim()
+  return text.replace(/^\s*((hey|ok|okay)[\s,]+)?(alexa|alexis|alexia|a\s?lexa|lexa)\b[\s,.!?]*/i, '').trim()
 }
 
 function capitalise(text: string): string {
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : text
 }
 
+const MAC = /Mac/.test(navigator.platform) || /Mac OS X/.test(navigator.userAgent)
+const MAC_SETTING = MAC ? ' On a Mac, also allow your browser in System Settings → Privacy & Security → Microphone.' : ''
+
+/** Browsers that have the API but no speech service behind it. */
+function noSpeechService(): boolean {
+  return 'brave' in navigator || /Electron|Code\/|Cursor/i.test(navigator.userAgent)
+}
+
 const LISTEN_ERRORS: Record<string, string> = {
-  'not-allowed': 'The microphone is blocked for this page. Type instead, or allow it in the address bar.',
-  'service-not-allowed': 'This browser will not do speech recognition here. Type instead.',
-  'audio-capture': 'No microphone was found. Type instead.',
+  'not-allowed': `The microphone is blocked for this page. Allow it from the icon in the address bar, or type instead.${MAC_SETTING}`,
+  'service-not-allowed': MAC
+    ? 'Speech recognition is switched off here. In Safari, turn on Dictation in System Settings → Keyboard, or type instead.'
+    : 'This browser will not do speech recognition here. Type instead.',
+  'audio-capture': `I can't hear a microphone. Check one is connected, or type instead.${MAC_SETTING}`,
   'no-speech': "I didn't hear anything. Tap the mic and try again.",
-  network: 'Speech recognition needs a connection just now. Type instead.',
+  'language-not-supported': "This browser can't recognise English speech here. Type instead.",
+  insecure:
+    'The microphone only works on a secure page. Open the demo at https://alexaplus.fanmoot.com (or on localhost), or type instead.',
+  busy: 'Another app is using the microphone. Close it and try again, or type instead.',
+}
+
+function listenError(code: string): string {
+  if (code === 'network') {
+    return noSpeechService()
+      ? "This browser has no speech service, so it can't listen. Chrome, Edge and Safari can, or type instead."
+      : "Speech recognition couldn't reach its service. Check the connection, or type instead."
+  }
+  return LISTEN_ERRORS[code] ?? "That didn't work. Type instead."
+}
+
+/** From a `getUserMedia` failure to a recognition-style code. */
+const MIC_ERRORS: Record<string, string> = {
+  NotAllowedError: 'not-allowed',
+  SecurityError: 'not-allowed',
+  NotFoundError: 'audio-capture',
+  OverconstrainedError: 'audio-capture',
+  NotReadableError: 'busy',
+  AbortError: 'busy',
+}
+
+/** English, as the browser speaks it, or British English. */
+function listeningLanguage(): string {
+  const lang = navigator.language || ''
+  return /^en(-|$)/i.test(lang) ? lang : 'en-GB'
+}
+
+/** Whether the mic has already been granted to this page, where the browser says. */
+async function micGranted(): Promise<boolean | null> {
+  try {
+    const status = await navigator.permissions.query({ name: 'microphone' as PermissionName })
+    return status.state === 'granted'
+  } catch {
+    return null
+  }
 }
 
 export type ListenState = 'idle' | 'listening'
@@ -79,11 +153,13 @@ export function useListener(onHeard: (text: string) => void) {
 
   const stop = useCallback(() => recognition.current?.stop(), [])
 
-  const start = useCallback(() => {
-    const Ctor = recognitionCtor()
-    if (!Ctor || recognition.current) return
+  const opening = useRef(false)
+  /** The browser's permission prompt is up. */
+  const [asking, setAsking] = useState(false)
+
+  const begin = useCallback((Ctor: RecognitionCtor, micReady: MicOpened | null) => {
     const rec = new Ctor()
-    rec.lang = navigator.language || 'en-GB'
+    rec.lang = listeningLanguage()
     rec.interimResults = true
     rec.continuous = false
     rec.maxAlternatives = 1
@@ -104,13 +180,20 @@ export function useListener(onHeard: (text: string) => void) {
       setInterim(withoutWakeWord(final + live))
     }
     rec.onerror = (event) => {
-      if (event.error !== 'aborted') setError(LISTEN_ERRORS[event.error] ?? "That didn't work. Type instead.")
+      // In the console as well, for whoever is working out why.
+      console.info('speech recognition error:', event.error)
+      failed = true
+      if (event.error !== 'aborted') setError(listenError(event.error))
     }
+    let failed = false
     rec.onend = () => {
       release()
       setInterim('')
       const text = capitalise(withoutWakeWord(final))
       if (text) heard.current(text)
+      // Ended with nothing heard and nothing said about why: say so, rather
+      // than the mic closing as if it had never opened.
+      else if (!failed) setError(LISTEN_ERRORS['no-speech']!)
     }
 
     setError(null)
@@ -120,16 +203,50 @@ export function useListener(onHeard: (text: string) => void) {
     try {
       rec.start()
     } catch {
+      if (micReady && 'close' in micReady) micReady.close()
       release()
       setError("The microphone didn't start. Type instead.")
       return
     }
-    void openMic().then((close) => {
+    const attach = (opened: MicOpened) => {
+      if (!('close' in opened)) return
       // Recognition may have ended before the mic opened.
-      if (recognition.current === rec) closeMic.current = close
-      else close?.()
-    })
+      if (recognition.current === rec) closeMic.current = opened.close
+      else opened.close()
+    }
+    if (micReady) attach(micReady)
+    else void openMic().then(attach)
   }, [release])
+
+  const start = useCallback(async () => {
+    const Ctor = recognitionCtor()
+    if (!Ctor || recognition.current || opening.current) return
+    if (!window.isSecureContext) {
+      setError(LISTEN_ERRORS.insecure!)
+      return
+    }
+    setError(null)
+    // Granted already, or a touch device (no meter capture to race with):
+    // start at once. Otherwise ask for the mic on its own first (see above).
+    if (!meterAllowed() || (await micGranted()) === true) {
+      begin(Ctor, null)
+      return
+    }
+    opening.current = true
+    setAsking(true)
+    setState('listening')
+    setInterim('')
+    const opened = await openMic()
+    opening.current = false
+    setAsking(false)
+    if ('error' in opened && opened.error !== 'unavailable') {
+      console.info('microphone refused:', opened.error)
+      setState('idle')
+      setError(listenError(MIC_ERRORS[opened.error] ?? 'audio-capture'))
+      return
+    }
+    begin(Ctor, opened)
+  }, [begin])
 
   useEffect(
     () => () => {
@@ -142,12 +259,13 @@ export function useListener(onHeard: (text: string) => void) {
   return {
     supported,
     state,
+    asking,
     interim,
     error,
     clearError: useCallback(() => setError(null), []),
     start,
     stop,
-    toggle: useCallback(() => (recognition.current ? stop() : start()), [start, stop]),
+    toggle: useCallback(() => (recognition.current ? stop() : void start()), [start, stop]),
   }
 }
 
@@ -276,7 +394,17 @@ export function useSpeaker() {
         setSpeaking(false)
       }
     }, [supported]),
-    /** The device's volume buttons: a step of a tenth, and never quite silent. */
-    nudgeVolume: useCallback((step: number) => setVolume((v) => Math.min(1, Math.max(0.1, Math.round((v + step) * 10) / 10))), []),
+    /**
+     * The device's volume buttons: a step of a tenth, never quite silent,
+     * with a click at the new level. Pressing one unmutes the voice, as the
+     * hardware's do. Speech synthesis fixes an utterance's volume when it
+     * starts, so the change is heard from the next sentence.
+     */
+    nudgeVolume: useCallback((step: number) => {
+      const next = Math.min(1, Math.max(0.1, Math.round((settings.current.volume + step) * 10) / 10))
+      setVolume(next)
+      setMuted(false)
+      volumeTick(next)
+    }, []),
   }
 }

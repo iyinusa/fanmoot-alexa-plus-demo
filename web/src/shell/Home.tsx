@@ -3,7 +3,7 @@
  * ticker's board — so the device looks switched on and busy with football
  * rather than waiting for instructions (W2-7).
  */
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, m } from 'framer-motion'
 import { useEffect, useState } from 'react'
 
 import type { Ambient } from '@/lib/protocol'
@@ -53,7 +53,7 @@ export function Home({ ambient, canListen, lines }: { ambient: Ambient | null; c
           <p className="text-xs font-bold uppercase tracking-[0.14em] text-muted">{canListen ? 'Tap the mic and say' : 'Try typing'}</p>
           <div className="relative mt-1 min-h-[4.5rem] @3xl:min-h-[5.5rem]">
             <AnimatePresence mode="wait">
-              <motion.p
+              <m.p
                 key={line}
                 initial={{ opacity: 0, y: 12, filter: 'blur(6px)' }}
                 animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
@@ -62,7 +62,7 @@ export function Home({ ambient, canListen, lines }: { ambient: Ambient | null; c
                 className="text-2xl font-light leading-snug text-ink @3xl:text-3xl"
               >
                 “Alexa, {afterWakeWord(line)}”
-              </motion.p>
+              </m.p>
             </AnimatePresence>
           </div>
         </div>

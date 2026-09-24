@@ -130,3 +130,44 @@ export const ArrowIcon = (p: Props) => (
     <path d="M5 12h14M13 6l6 6-6 6" />
   </Svg>
 )
+
+/** A signal that has dropped: the fault screen (W5-4). */
+export const OfflineIcon = (p: Props) => (
+  <Svg {...p}>
+    <path d="M3 3l18 18M8.5 16.4a5 5 0 0 1 7 0M5 12.9a10 10 0 0 1 4.2-2.4M19 12.9a10 10 0 0 0-2.8-2M1.8 9.3A15 15 0 0 1 6 6.7M22.2 9.3A15 15 0 0 0 11 5.3" />
+    <circle cx="12" cy="19.5" r="0.6" fill="currentColor" />
+  </Svg>
+)
+
+export const InfoIcon = (p: Props) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 11v5.5M12 7.6v.2" />
+  </Svg>
+)
+
+export const PlayIcon = (p: Props) => (
+  <Svg {...p}>
+    <path d="M8 5.5v13l10.5-6.5z" fill="currentColor" strokeWidth={1.4} />
+  </Svg>
+)
+
+/** The beats of the landing screen (W5-1): talk, a real agent, the trace. */
+export const WaveIcon = (p: Props) => (
+  <Svg {...p}>
+    <path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10.5v3" />
+  </Svg>
+)
+
+export const PlugIcon = (p: Props) => (
+  <Svg {...p}>
+    <path d="M9 3v4M15 3v4M6.5 7h11v3.5a5.5 5.5 0 0 1-11 0zM12 16v5" />
+  </Svg>
+)
+
+export const TraceIcon = (p: Props) => (
+  <Svg {...p}>
+    <path d="M4 6h9M4 12h13M4 18h7" />
+    <path d="M17 4.5l3 1.5-3 1.5M20 16.5l-3 1.5 3 1.5" />
+  </Svg>
+)

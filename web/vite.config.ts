@@ -4,10 +4,13 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+import { budget } from './budget'
+
 // The demo SPA. Builds straight into app/static/web, which FastAPI serves —
 // one origin for the shell, /ws and /healthz (HAD-10), as in fanmoot's AD-1.
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  // `budget()` fails the build when the JavaScript outgrows W5-3's budget.
+  plugins: [react(), tailwindcss(), budget()],
   resolve: {
     // fileURLToPath, not URL.pathname: pathname percent-encodes, so a project
     // path containing a space ('Gensix Solutions') resolves to
@@ -20,16 +23,16 @@ export default defineConfig({
     sourcemap: true,
     rollupOptions: {
       output: {
-        // The framework in chunks of its own, as in fanmoot: a deploy that
-        // changes only the demo leaves these hashes, and a judge's cache, alone.
+        // React in a chunk of its own, as in fanmoot: a deploy that changes
+        // only the demo leaves its hash, and a judge's cache, alone.
+        //
+        // Framer Motion is deliberately *not* pinned to a chunk (W5-3). The
+        // entry uses `m` with `domAnimation`; layout and drag are imported
+        // only by the lazy cards and trace chunks. A manual chunk would put
+        // every module of the library in one file on the critical path, and
+        // undo exactly that split.
         manualChunks(id) {
-          if (!id.includes('node_modules')) return undefined
-          if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) {
-            return 'vendor-react'
-          }
-          if (/[\\/]node_modules[\\/](framer-motion|motion-dom|motion-utils)[\\/]/.test(id)) {
-            return 'vendor-motion'
-          }
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return 'vendor-react'
           return undefined
         },
       },

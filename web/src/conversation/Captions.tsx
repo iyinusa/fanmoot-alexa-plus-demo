@@ -8,7 +8,7 @@
  * belongs to rather than floating over whatever card is on screen. With
  * captions off, the pill is just the voice.
  */
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, m } from 'framer-motion'
 
 import type { Caption } from '@/lib/speech'
 import { Waveform } from '@/shell/Waveform'
@@ -18,9 +18,8 @@ export function Captions({ caption, on, speaking }: { caption: Caption | null; o
   return (
     <AnimatePresence>
       {(words || speaking) && (
-        <motion.div
+        <m.div
           key="captions"
-          layout
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 6 }}
@@ -37,7 +36,7 @@ export function Captions({ caption, on, speaking }: { caption: Caption | null; o
               <span className="text-white/45">{caption.text.slice(caption.said)}</span>
             </span>
           )}
-        </motion.div>
+        </m.div>
       )}
     </AnimatePresence>
   )

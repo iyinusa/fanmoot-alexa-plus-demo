@@ -1,0 +1,8 @@
+# alexaplus.fanmoot.com — the demo page is public and worth indexing; the
+# machinery behind it is not.
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /oauth/
+Disallow: /sandbox
+Disallow: /linked

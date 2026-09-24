@@ -11,11 +11,16 @@
  * back from Fanmoot (W4-4). It is named for what it proves — "Live on
  * fanmoot.com" — and the take's page on fanmoot.com is one tap away, because
  * fanmoot.com itself cannot be framed here.
+ *
+ * Loaded lazily (W5-3): the home screen has no cards, so neither the stack
+ * nor the view host is on the critical path. Framer Motion's layout feature,
+ * which the stack's cards use, comes in this chunk too (`domMax`).
  */
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, domMax, LazyMotion, m } from 'framer-motion'
 import { useEffect, useState } from 'react'
 
 import type { ViewPayload, ViewResource } from '@/lib/socket'
+import { onTabKeys } from '@/lib/tabs'
 import type { Theme } from '@/lib/theme'
 import { CloseIcon, ExpandIcon, ExternalIcon } from '@/shell/Icons'
 import { type DisplayMode, type ViewHost, ViewFrame } from '@/views/ViewFrame'
@@ -73,15 +78,22 @@ export function CardStack({
   const behind = Math.min(2, shown.length - 1)
 
   return (
+    <LazyMotion features={domMax}>
     <section aria-label="Cards" className={expanded ? 'flex h-full min-h-0 flex-col' : 'relative'}>
       {shown.length > 1 && (
-        <div role="tablist" aria-label="Cards in this conversation" className="mb-2 flex gap-1.5 overflow-x-auto pb-1">
+        <div
+          role="tablist"
+          aria-label="Cards in this conversation"
+          onKeyDown={onTabKeys}
+          className="mb-2 flex gap-1.5 overflow-x-auto pb-1"
+        >
           {shown.map((card) => (
             <button
               key={card.call_id}
               type="button"
               role="tab"
               aria-selected={card.call_id === activeId}
+              tabIndex={card.call_id === activeId ? 0 : -1}
               onClick={() => setChosen(card.call_id)}
               className={`shrink-0 rounded-full border px-3 py-1 text-xs transition-colors ${
                 card.call_id === activeId
@@ -121,7 +133,7 @@ export function CardStack({
               },
             }
             return (
-              <motion.div
+              <m.div
                 key={card.call_id}
                 layout
                 initial={{ opacity: 0, y: 24, scale: 0.97, rotateX: 8 }}
@@ -181,7 +193,7 @@ export function CardStack({
                     </button>
                   </div>
                 )}
-              </motion.div>
+              </m.div>
             )
           })}
         </AnimatePresence>
@@ -190,7 +202,7 @@ export function CardStack({
       {/* `ui/open-link`: the host asks the person, it does not navigate for them. */}
       <AnimatePresence>
         {link && (
-          <motion.div
+          <m.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
@@ -211,9 +223,10 @@ export function CardStack({
             <button type="button" onClick={() => setLink(null)} aria-label="Don't open it" className="text-faint hover:text-ink">
               <CloseIcon size={16} />
             </button>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
     </section>
+    </LazyMotion>
   )
 }

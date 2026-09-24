@@ -23,9 +23,17 @@
  *   with the server's `view.call.result` — the thread view's reply composer,
  *   posting over the visitor's own MCP session (W2-6).
  * - **The ticker.** `ambient` is what the corner of the screen shows (W2-7).
+ *
+ * W5-4 adds what the device needs to stay in character when things go wrong:
+ * when the next reconnect is due (`retryAt`) and a way to try at once
+ * (`reconnect()`); the error `code` on a failed turn, so Alexa can apologise
+ * for the right thing; `fault`, for the errors that stop the demo rather than
+ * pass as a notice; and `ask()` saying whether it was sent, so a question
+ * typed while the socket is down stays in the box instead of vanishing.
  */
 import { useCallback, useEffect, useReducer, useRef } from 'react'
 
+import { type FaultKind, SCREEN_CODES } from '@/lib/faults'
 import { WIRE_VERSION } from '@/lib/protocol'
 import type {
   AuthState,
@@ -63,6 +71,8 @@ export type Turn = {
   tools: ToolCall[]
   end?: TurnEnd
   error?: string
+  /** The server's code for `error` (`no_model`, `mcp_unavailable`…). */
+  errorCode?: string
 }
 
 export type ViewResource = { uri: string; mime: string; html: string; meta: Record<string, unknown> }
@@ -71,6 +81,12 @@ export type AuthRequired = Extract<ServerFrame, { type: 'auth.required' }>
 
 type State = {
   status: SocketStatus
+  /** When the next reconnect attempt is due, while `closed`. */
+  retryAt: number | null
+  /** Whether this page has ever had an open socket. */
+  everOpen: boolean
+  /** An error that stops the demo and gets a screen of its own (W5-4). */
+  fault: FaultKind | null
   hello: Hello | null
   rttMs: number | null
   session: SessionState | null
@@ -92,6 +108,9 @@ type State = {
 
 const INITIAL: State = {
   status: 'connecting',
+  retryAt: null,
+  everOpen: false,
+  fault: null,
   hello: null,
   rttMs: null,
   session: null,
@@ -119,7 +138,7 @@ const VIEW_CALL_TIMEOUT_MS = 30_000
 const TRACE_LIMIT = 300
 
 type Action =
-  | { kind: 'status'; status: SocketStatus }
+  | { kind: 'status'; status: SocketStatus; retryAt?: number }
   | { kind: 'rtt'; ms: number }
   | { kind: 'frame'; frame: ServerFrame }
   | { kind: 'dismiss' }
@@ -129,7 +148,14 @@ function updateTurn(turns: Turn[], id: string, change: (turn: Turn) => Turn): Tu
 }
 
 function reduce(state: State, action: Action): State {
-  if (action.kind === 'status') return { ...state, status: action.status }
+  if (action.kind === 'status') {
+    return {
+      ...state,
+      status: action.status,
+      retryAt: action.retryAt ?? null,
+      everOpen: state.everOpen || action.status === 'open',
+    }
+  }
   if (action.kind === 'rtt') return { ...state, rttMs: action.ms }
   if (action.kind === 'dismiss') return { ...state, error: null, authRequired: null }
 
@@ -138,13 +164,10 @@ function reduce(state: State, action: Action): State {
     case 'hello':
       // A tab left open across a deploy speaks an older protocol than the
       // server it reconnects to. Say so, rather than half-work.
+      // A session was granted, so "the demo is full" is over.
       return frame.wire === WIRE_VERSION
-        ? { ...state, hello: frame }
-        : {
-            ...state,
-            hello: frame,
-            error: { code: 'stale_page', message: 'The demo has been updated. Reload the page to carry on.' },
-          }
+        ? { ...state, hello: frame, fault: state.fault === 'capacity' ? null : state.fault }
+        : { ...state, hello: frame, fault: 'stale' }
     case 'session':
       // The conversation on screen is kept: a reconnecting socket sees the
       // fresh session's frame first and the resumed one a moment later.
@@ -216,6 +239,7 @@ function reduce(state: State, action: Action): State {
     case 'trace':
       return { ...state, trace: [...state.trace.slice(-(TRACE_LIMIT - 1)), frame.frame] }
     case 'error':
+      if (SCREEN_CODES[frame.code]) return { ...state, fault: SCREEN_CODES[frame.code]! }
       if (frame.code === 'resume_failed') {
         // The old session has ended on the server, and its conversation with it.
         return { ...state, error: null, turns: [], lastView: null, cards: [] }
@@ -224,7 +248,7 @@ function reduce(state: State, action: Action): State {
         return {
           ...state,
           error: frame,
-          turns: updateTurn(state.turns, frame.turn_id, (t) => ({ ...t, error: frame.message })),
+          turns: updateTurn(state.turns, frame.turn_id, (t) => ({ ...t, error: frame.message, errorCode: frame.code })),
         }
       }
       return { ...state, error: frame }
@@ -276,6 +300,7 @@ export function useDemoSession() {
   signInUrl.current = state.session?.sign_in_url ?? null
   const viewCalls = useRef(new Map<number, { resolve: (r: CallToolResult) => void; reject: (e: Error) => void; timer: number }>())
   const nextViewCall = useRef(1)
+  const connectNow = useRef<() => void>(() => {})
 
   useEffect(() => {
     let attempt = 0
@@ -334,31 +359,50 @@ export function useDemoSession() {
 
       socket.onclose = () => {
         window.clearInterval(pinger)
-        if (disposed) return
-        dispatch({ kind: 'status', status: 'closed' })
-        retry = window.setTimeout(connect, backoff(attempt++))
+        if (disposed || socketRef.current !== socket) return
+        const wait = backoff(attempt++)
+        dispatch({ kind: 'status', status: 'closed', retryAt: Date.now() + wait })
+        retry = window.setTimeout(connect, wait)
       }
     }
+
+    // "Try now" on the device's fault screen, and the browser coming back
+    // online: skip the rest of the backoff.
+    connectNow.current = () => {
+      const socket = socketRef.current
+      if (disposed || socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return
+      window.clearTimeout(retry)
+      attempt = 0
+      connect()
+    }
+    const online = () => connectNow.current()
+    window.addEventListener('online', online)
 
     connect()
     return () => {
       // StrictMode mounts twice in development; the first socket is closed
       // here and must not schedule a reconnect behind the second.
       disposed = true
+      window.removeEventListener('online', online)
       window.clearTimeout(retry)
       window.clearInterval(pinger)
       socketRef.current?.close()
     }
   }, [])
 
-  const send = useCallback((frame: ClientFrame) => {
+  /** False when there is no open socket to send it on. */
+  const send = useCallback((frame: ClientFrame): boolean => {
     const socket = socketRef.current
-    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(frame))
+    if (socket?.readyState !== WebSocket.OPEN) return false
+    socket.send(JSON.stringify(frame))
+    return true
   }, [])
 
   return {
     ...state,
+    /** False when it could not be sent: the socket is down. */
     ask: useCallback((text: string) => send({ type: 'turn', text }), [send]),
+    reconnect: useCallback(() => connectNow.current(), []),
     cancel: useCallback(() => send({ type: 'cancel' }), [send]),
     reset: useCallback(() => send({ type: 'reset' }), [send]),
     useDemoAccount: useCallback(() => send({ type: 'auth.demo' }), [send]),

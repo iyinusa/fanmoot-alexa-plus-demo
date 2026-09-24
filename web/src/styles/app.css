@@ -285,6 +285,100 @@
     background: var(--fm-red);
     box-shadow: 0 0 16px 1px rgb(217 58 58 / 0.6);
   }
+  /* Lost the connection (W5-4): amber, pulsing, as a smart display's light
+   * does while it looks for its network. */
+  .fm-lightbar.is-connecting {
+    opacity: 1;
+    transform: none;
+    background: var(--fm-amber);
+    box-shadow: 0 0 18px 1px rgb(242 167 59 / 0.55);
+    animation: fm-breathe 1.8s ease-in-out infinite;
+  }
+  /* A volume press: the light filled from the left to the level (Device.tsx
+   * sets the scale). */
+  .fm-lightbar.is-volume {
+    opacity: 1;
+    transform-origin: left center;
+    background: linear-gradient(90deg, #4d80ff, #8fb0ff);
+    transition:
+      opacity var(--fm-fast) var(--fm-ease),
+      transform var(--fm-base) var(--fm-ease);
+  }
+  /* Switched on (W5-2): the light sweeps out from the middle once, and goes. */
+  .fm-lightbar.is-boot {
+    animation: fm-wake 1.5s var(--fm-ease) 0.25s both;
+  }
+
+  /* Four bars beside the landing screen's kicker (W5-1): a voice, in CSS,
+   * so the landing costs no canvas and no animation frame. */
+  .fm-bars {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    height: 14px;
+  }
+  .fm-bars span {
+    width: 3px;
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(#4d80ff, #4fbf57);
+    transform-origin: center;
+    animation: fm-bar 1.1s ease-in-out infinite;
+  }
+  .fm-bars span:nth-child(2) {
+    animation-delay: -0.35s;
+  }
+  .fm-bars span:nth-child(3) {
+    animation-delay: -0.7s;
+  }
+  .fm-bars span:nth-child(4) {
+    animation-delay: -0.2s;
+  }
+
+  /* The trace column, pointed at by the landing screen (W5-1). */
+  .fm-spotlight {
+    border-color: color-mix(in srgb, var(--fm-accent) 55%, transparent);
+    animation: fm-spot 2.4s ease-in-out infinite;
+  }
+}
+
+@keyframes fm-wake {
+  0% {
+    opacity: 0;
+    transform: scaleX(0.05);
+  }
+  45% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scaleX(1);
+  }
+}
+
+@keyframes fm-bar {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes fm-spot {
+  0%,
+  100% {
+    box-shadow:
+      var(--fm-shadow),
+      0 0 0 0 color-mix(in srgb, var(--fm-accent) 0%, transparent);
+  }
+  50% {
+    box-shadow:
+      var(--fm-shadow),
+      0 0 0 6px color-mix(in srgb, var(--fm-accent) 22%, transparent);
+  }
 }
 
 @keyframes fm-breathe {

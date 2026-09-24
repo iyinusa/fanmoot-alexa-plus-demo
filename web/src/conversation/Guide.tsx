@@ -8,7 +8,7 @@
  * server from what is on today (app/guided.py), which is why each chip can say
  * why it chose its match.
  */
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, m } from 'framer-motion'
 
 import type { Tour } from '@/lib/guide'
 import type { Scenario } from '@/lib/protocol'
@@ -32,7 +32,7 @@ export function Guide(props: Props) {
   return (
     <AnimatePresence mode="wait" initial={false}>
       {props.tour ? (
-        <motion.div
+        <m.div
           key="tour"
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
@@ -40,9 +40,9 @@ export function Guide(props: Props) {
           transition={{ duration: 0.25, ease: EASE }}
         >
           <TourBar {...props} tour={props.tour} />
-        </motion.div>
+        </m.div>
       ) : (
-        <motion.div
+        <m.div
           key="chips"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -50,7 +50,7 @@ export function Guide(props: Props) {
           transition={{ duration: 0.2 }}
         >
           <Chips {...props} />
-        </motion.div>
+        </m.div>
       )}
     </AnimatePresence>
   )
@@ -116,7 +116,7 @@ function TourBar({ tour, running, next, leave, signIn }: Props & { tour: Tour })
         {phase === 'ready' && tour.note && <span className="text-xs text-muted">{tour.note}</span>}
 
         {phase === 'ready' && tour.offer && (
-          <motion.button
+          <m.button
             type="button"
             onClick={next}
             disabled={running}
@@ -128,7 +128,7 @@ function TourBar({ tour, running, next, leave, signIn }: Props & { tour: Tour })
             <span className="shrink-0 text-white/70">Say</span>
             <span className="min-w-0 truncate font-bold">“{tour.offer}”</span>
             <ArrowIcon size={14} className="shrink-0" />
-          </motion.button>
+          </m.button>
         )}
 
         {phase === 'signin' && (

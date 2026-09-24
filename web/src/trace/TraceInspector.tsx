@@ -20,10 +20,12 @@
  * It fills whatever holds it — the column beside the device on a wide screen,
  * a sheet on a narrow one (`TracePanel`).
  */
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, m } from 'framer-motion'
 import { memo, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import type { AuthState, Facts, TraceFrame } from '@/lib/protocol'
+import { scrollBehavior } from '@/lib/motion'
+import { onTabKeys } from '@/lib/tabs'
 import { AlertIcon, CheckIcon } from '@/shell/Icons'
 import { hasRedaction, replay, type ReplayContext } from '@/trace/curl'
 import { type Exchange, FAST_MS, type Filter, matches, pair, SLOW_MS, toolLatency } from '@/trace/exchanges'
@@ -73,7 +75,7 @@ export function LatencyBadge({ ms, graded }: { ms: number; graded: boolean }) {
         : 'border-[var(--fm-red)]/40 bg-[var(--fm-red)]/12 text-danger'
   const text = ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)} s`
   return (
-    <motion.span
+    <m.span
       initial={{ opacity: 0, scale: 0.7 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.25, ease: EASE }}
@@ -81,7 +83,7 @@ export function LatencyBadge({ ms, graded }: { ms: number; graded: boolean }) {
       className={`inline-flex shrink-0 items-center rounded-full border px-1.5 font-mono text-[10px] leading-4 tabular-nums ${tone}`}
     >
       {text}
-    </motion.span>
+    </m.span>
   )
 }
 
@@ -201,7 +203,7 @@ function Detail({ exchange, ctx }: { exchange: Exchange; ctx: ReplayContext }) {
   const redacted = sides.some((s) => hasRedaction(s.frame.payload))
 
   return (
-    <motion.div
+    <m.div
       initial={{ height: 0, opacity: 0 }}
       animate={{ height: 'auto', opacity: 1 }}
       exit={{ height: 0, opacity: 0 }}
@@ -211,13 +213,14 @@ function Detail({ exchange, ctx }: { exchange: Exchange; ctx: ReplayContext }) {
       <div className="mt-2 space-y-2.5 rounded-fm-sm border border-line bg-bg/70 p-2.5">
         <div className="flex flex-wrap items-center gap-2">
           {sides.length > 1 && (
-            <div role="tablist" aria-label="Payload" className="inline-flex rounded-full border border-line p-0.5">
+            <div role="tablist" aria-label="Payload" onKeyDown={onTabKeys} className="inline-flex rounded-full border border-line p-0.5">
               {sides.map((s) => (
                 <button
                   key={s.id}
                   type="button"
                   role="tab"
                   aria-selected={s.id === shown.id}
+                  tabIndex={s.id === shown.id ? 0 : -1}
                   onClick={() => setSide(s.id)}
                   className={`rounded-full px-2.5 py-0.5 text-[11px] transition-colors ${
                     s.id === shown.id ? 'bg-[var(--fm-accent)] text-[var(--fm-accent-text)]' : 'text-muted hover:text-ink'
@@ -254,7 +257,7 @@ function Detail({ exchange, ctx }: { exchange: Exchange; ctx: ReplayContext }) {
           </p>
         )}
       </div>
-    </motion.div>
+    </m.div>
   )
 }
 
@@ -263,30 +266,46 @@ const Row = memo(function Row({
   open,
   toggle,
   ctx,
+  fresh,
 }: {
   exchange: Exchange
   open: boolean
   toggle: (key: number) => void
   ctx: ReplayContext
+  /** Arrived after the list first drew, so it glows as it lands (W5-2). */
+  fresh: boolean
 }) {
+  // Decided once, when the row mounts: a glow that stopped because a later
+  // render changed its mind would cut off mid-fade.
+  const [glow] = useState(fresh)
   const dir = DIR[exchange.dir]
   const error = exchange.status === 'error'
   const httpStatus = exchange.latest.http_status
   const isTool = exchange.method === 'tools/call'
   return (
-    <motion.li
+    <m.li
       initial={{ opacity: 0, x: 14 }}
-      animate={{ opacity: exchange.origin === 'ambient' && !open ? 0.72 : 1, x: 0 }}
+      // Dimmed, not faded: at 0.72 the ticker tag fell below WCAG AA (W5-5).
+      animate={{ opacity: exchange.origin === 'ambient' && !open ? 0.86 : 1, x: 0 }}
       transition={{ duration: 0.3, ease: EASE }}
-      className={`rounded-fm-sm border px-2.5 py-1.5 transition-colors ${
+      className={`relative rounded-fm-sm border px-2.5 py-1.5 transition-colors ${
         open ? 'border-[var(--fm-accent)]/45 bg-surface' : 'border-transparent hover:border-line hover:bg-surface/70'
       }`}
     >
+      {glow && (
+        <m.span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 rounded-fm-sm bg-[var(--fm-accent)]"
+          initial={{ opacity: 0.16 }}
+          animate={{ opacity: 0 }}
+          transition={{ duration: 1.4, ease: 'easeOut' }}
+        />
+      )}
       <button
         type="button"
         onClick={() => toggle(exchange.key)}
         aria-expanded={open}
-        className="block w-full text-left"
+        className="relative block w-full text-left"
       >
         <span className="flex items-center gap-1.5 font-mono text-[11px] leading-5">
           <span className="w-3 shrink-0 text-center text-faint" title={dir.label}>
@@ -319,7 +338,7 @@ const Row = memo(function Row({
         )}
       </button>
       <AnimatePresence initial={false}>{open && <Detail exchange={exchange} ctx={ctx} />}</AnimatePresence>
-    </motion.li>
+    </m.li>
   )
 })
 
@@ -359,6 +378,16 @@ export function TraceInspector({ trace, facts, auth, connected, action }: Props)
   )
   const toggle = useCallback((key: number) => setOpen((current) => (current === key ? null : key)), [])
 
+  // Which rows were already there when the list first drew, or have been
+  // drawn since: only a row that is new to this inspector glows (W5-2), so
+  // changing the filter does not light up the whole list again.
+  const drawn = useRef<Set<number> | null>(null)
+  if (drawn.current === null) drawn.current = new Set(exchanges.map((e) => e.key))
+  const seen = drawn.current
+  useEffect(() => {
+    for (const e of shown) seen.add(e.key)
+  }, [shown, seen])
+
   // ── Always on the newest frame ──────────────────────────────────────────
   // Every new frame brings the list to its end, and so does changing the
   // filter. Opening a row does not: that is the reader looking at something.
@@ -367,7 +396,7 @@ export function TraceInspector({ trace, facts, auth, connected, action }: Props)
   useLayoutEffect(() => {
     const el = list.current
     if (!el) return
-    el.scrollTo({ top: el.scrollHeight, behavior: first.current ? 'auto' : 'smooth' })
+    el.scrollTo({ top: el.scrollHeight, behavior: first.current ? 'auto' : scrollBehavior() })
     first.current = false
   }, [trace.length, shown.length, filter, showAmbient])
 
@@ -429,7 +458,14 @@ export function TraceInspector({ trace, facts, auth, connected, action }: Props)
           ) : (
             <ol className="space-y-0.5" aria-live="off">
               {shown.map((exchange) => (
-                <Row key={exchange.key} exchange={exchange} open={open === exchange.key} toggle={toggle} ctx={ctx} />
+                <Row
+                  key={exchange.key}
+                  exchange={exchange}
+                  open={open === exchange.key}
+                  toggle={toggle}
+                  ctx={ctx}
+                  fresh={!seen.has(exchange.key)}
+                />
               ))}
             </ol>
           )}

@@ -4,7 +4,7 @@ The operator's two levers, on a running demo:
 
 ``GET``     the chain in force, today's calls, tokens and estimated spend per
             provider, and each provider's ceiling (W1-3c)
-``PUT``     ``{"chain": ["gemini/gemini-2.5-flash", …]}`` — replace the chain.
+``PUT``     ``{"chain": ["gemini/gemini-3.1-flash-lite", …]}`` — replace the chain.
             The next turn uses it. This is "Bedrock got expensive, switch to
             Gemini" without a redeploy (W1-3)
 ``DELETE``  drop the override and go back to ``FMD_MODEL_CHAIN``
@@ -75,8 +75,9 @@ async def read_models(request: Request) -> dict[str, Any]:
 
 @router.put("/models", dependencies=[Depends(_operator)])
 async def replace_chain(update: ChainUpdate, request: Request) -> dict[str, Any]:
-    chain = [name for name in update.chain if "/" in name.strip()]
-    if len(chain) != len(update.chain):
+    # A bare Gemini or Bedrock id gets its provider, as in FMD_MODEL_CHAIN.
+    chain = [models.qualify(name.strip()) for name in update.chain]
+    if any("/" not in name for name in chain):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "Each entry is a LiteLLM model id with its provider: bedrock/…, gemini/…",

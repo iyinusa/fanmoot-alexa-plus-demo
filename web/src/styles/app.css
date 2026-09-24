@@ -27,9 +27,31 @@
   --font-heading: var(--fm-font-heading);
   --font-body: var(--fm-font-body);
 
+  --color-code-string: var(--fm-code-string);
+  --color-code-number: var(--fm-code-number);
+
   --radius-fm: var(--fm-radius);
   --radius-fm-sm: var(--fm-radius-sm);
   --radius-fm-lg: var(--fm-radius-lg);
+}
+
+/* The trace inspector's payload colours (W3-3). Not brand tokens, so they live
+ * here rather than in tokens.css, but on the same three-state rule: the brand
+ * green and amber are too light to read as small text on white, so light gets
+ * a deeper pair and dark keeps the brand's own. */
+:root {
+  --fm-code-string: #2b7a31;
+  --fm-code-number: #9a5a00;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --fm-code-string: #72d17a;
+    --fm-code-number: #f2a73b;
+  }
+}
+:root[data-theme='dark'] {
+  --fm-code-string: #72d17a;
+  --fm-code-number: #f2a73b;
 }
 
 @layer base {
@@ -278,6 +300,34 @@
 }
 
 @layer utilities {
+  /* A scrollbar that stays out of the way (the trace inspector, W3): hairline
+   * thin, the colour of the theme's own lines, and only there while the
+   * pointer is over the pane. Standard properties for Chrome 121+, Firefox
+   * and Safari 18.2+; the WebKit pseudo-elements for older Safari. */
+  .fm-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  .fm-scroll:hover,
+  .fm-scroll:focus-within {
+    scrollbar-color: var(--fm-line-strong) transparent;
+  }
+  .fm-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .fm-scroll::-webkit-scrollbar-track,
+  .fm-scroll::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  .fm-scroll::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: transparent;
+  }
+  .fm-scroll:hover::-webkit-scrollbar-thumb {
+    background: var(--fm-line-strong);
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .fm-motion,
     .fm-motion * {

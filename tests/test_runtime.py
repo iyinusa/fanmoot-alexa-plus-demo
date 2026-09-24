@@ -237,7 +237,7 @@ async def test_the_conversation_is_remembered_between_turns(mcp_server: RunningS
 
 
 async def test_no_model_is_an_error_the_visitor_is_told(mcp_server: RunningServer) -> None:
-    session = _session(mcp_server, ScriptedLlm.of(), model_chain="gemini/gemini-2.5-flash")
+    session = _session(mcp_server, ScriptedLlm.of(), model_chain="gemini/gemini-3.1-flash-lite")
     try:
         frames = await _turn(session, "score?")
     finally:
@@ -248,7 +248,7 @@ async def test_no_model_is_an_error_the_visitor_is_told(mcp_server: RunningServe
     assert frames[-1]["type"] == "turn.end"
     assert frames[-1]["status"] == "error"
     assert frames[-1]["skipped"] == [
-        {"model": "gemini/gemini-2.5-flash", "reason": "no FMD_GEMINI_API_KEY"}
+        {"model": "gemini/gemini-3.1-flash-lite", "reason": "no FMD_GEMINI_API_KEY"}
     ]
 
 

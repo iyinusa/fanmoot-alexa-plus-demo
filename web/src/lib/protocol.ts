@@ -1,5 +1,5 @@
 /**
- * The `/ws` wire protocol, version 3 (W1-5, W2). Mirrors app/ws.py,
+ * The `/ws` wire protocol, version 4 (W1-5, W2, W3). Mirrors app/ws.py,
  * app/session.py and app/agent/runtime.py — a frame changed there is changed
  * here, and WIRE_VERSION goes up.
  *
@@ -7,7 +7,7 @@
  * knows about a turn, it learns from these frames.
  */
 
-export const WIRE_VERSION = 3
+export const WIRE_VERSION = 4
 
 // ── Browser → server ─────────────────────────────────────────────────────────
 export type ClientFrame =
@@ -72,6 +72,8 @@ export type Facts = {
     connected_at: number
   } | null
   auth: AuthState
+  /** What the authorization server advertises in its own metadata (W3-4). */
+  oauth: { issuer: string; resource: string; pkce: string | null; scopes: string[] } | null
   models: { chain: string[]; primary: string | null; override: boolean }
 }
 
@@ -124,8 +126,18 @@ export type TraceFrame = {
   tool?: string | null
   http_status?: number | null
   www_authenticate?: string | null
+  /** An OAuth request's address and body encoding, for "copy as cURL" (W3-6). */
+  url?: string
+  encoding?: 'form' | 'json' | null
+  pkce?: string
+  client_mode?: string
   model?: string
   provider?: string
+  position?: number
+  tokens_in?: number
+  tokens_out?: number
+  cost_usd?: number | null
+  model_version?: string | null
   /** Who asked, when it was not the agent: a card's button, or the ticker. */
   origin?: 'view' | 'ambient'
 }

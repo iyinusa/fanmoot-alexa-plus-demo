@@ -153,10 +153,21 @@ class DemoOAuthClient:
         self._lock = asyncio.Lock()
 
     # ── Discovery ────────────────────────────────────────────────────────────
+    @property
+    def discovered(self) -> ServerAuth | None:
+        """What discovery last found, while it is fresh — without asking again.
+
+        The trace header strip (W3-4) states the PKCE method from this: what
+        the authorization server advertised, not what this client assumes.
+        """
+        if self._auth is not None and time.time() - self._auth_at < _DISCOVERY_TTL_S:
+            return self._auth
+        return None
+
     async def server_auth(self, tracer: Tracer) -> ServerAuth:
         async with self._lock:
-            if self._auth is not None and time.time() - self._auth_at < _DISCOVERY_TTL_S:
-                return self._auth
+            if self.discovered is not None:
+                return self.discovered
             self._auth = await self._discover(tracer)
             self._auth_at = time.time()
             return self._auth
@@ -409,6 +420,11 @@ class DemoOAuthClient:
             status="pending",
             summary=label,
             payload=data if data is not None else json,
+            # The address, so the trace panel can hand a judge the same request
+            # as cURL (W3-6). Never the /authorize URL: that one is built in
+            # ``begin`` and carries the one-time ``state`` in its query.
+            url=url,
+            encoding="form" if data is not None else "json" if json is not None else None,
         )
         started = time.perf_counter()
         try:

@@ -30,13 +30,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 #: Vite proxy carrying *this* origin, so development allows it by default.
 VITE_DEV_ORIGINS = ("http://localhost:5174", "http://127.0.0.1:5174")
 
-#: The chain HAD-9 settles on: Amazon's own model first (AWS Builder), Claude on
-#: Bedrock second because it handles multi-turn tool use more reliably, and
-#: Gemini as a genuine third provider so a Bedrock outage is survivable. The
-#: `us.` ids are cross-region inference profiles, which is how Bedrock serves
-#: on-demand calls for these models.
+#: The chain used when ``FMD_MODEL_CHAIN`` is not set. When it is set, its
+#: order is the order models are tried, whatever the providers. This default
+#: is HAD-9's: Amazon's own model first (AWS Builder), Claude on Bedrock
+#: second, and Gemini as a genuine third provider so a Bedrock outage is
+#: survivable. The `us.` ids are cross-region inference profiles, which is how
+#: Bedrock serves on-demand calls for these models. Gemini is
+#: `gemini-3.1-flash-lite`: Google no longer serves `gemini-2.5-flash` to new
+#: API keys.
 DEFAULT_MODEL_CHAIN = (
-    "bedrock/us.amazon.nova-pro-v1:0,bedrock/us.anthropic.claude-sonnet-4-6,gemini/gemini-2.5-flash"
+    "bedrock/us.amazon.nova-pro-v1:0,"
+    "bedrock/us.anthropic.claude-sonnet-4-6,"
+    "gemini/gemini-3.1-flash-lite"
 )
 
 

@@ -8,11 +8,12 @@ by calling the real [Fanmoot MCP server](https://mcp.fanmoot.com/mcp). A trace
 beside the conversation shows every MCP frame, OAuth request and model call as
 it happens.
 
-> **Status: the Alexa+ shell (W2).** A real ADK agent, Bedrock first, drives a
-> real MCP session against `mcp.fanmoot.com` and signs fans in through a real
+> **Status: the trace inspector (W3).** A real ADK agent, Bedrock first, drives
+> a real MCP session against `mcp.fanmoot.com` and signs fans in through a real
 > OAuth 2.1 flow. The browser shows it as a smart display: voice in and out,
-> captions, the server's own cards, and live scores in the corner. The trace
-> inspector (W3) comes next; until then a simpler trace sits beside the device.
+> captions, the server's own cards, and live scores in the corner. Beside it,
+> the trace inspector shows every frame of that session. Guided scenarios (W4)
+> come next.
 
 ## Why a simulation
 
@@ -42,10 +43,11 @@ browser ──/ws──▶ FastAPI (this repo) ──Streamable HTTP──▶ mc
 - **One real MCP session per visitor**, with the official `mcp` client SDK,
   negotiating protocol `2025-11-25`. When the server refuses a call with a 401
   challenge, the visitor gets a "Sign in to Fanmoot" button.
-- **A switchable model chain.** `FMD_MODEL_CHAIN` lists models in order: Amazon
-  Nova Pro on Bedrock first, Claude on Bedrock second, Gemini third. A provider
-  that errors, throttles or times out falls through to the next one for that
-  model call. The chain is read every turn and can be reordered on a running
+- **A switchable model chain.** `FMD_MODEL_CHAIN` lists models in the order
+  they are tried, and no provider is preferred over another: put Gemini first
+  and Gemini answers. The default, when it is unset, is Amazon Nova Pro on
+  Bedrock, then Claude on Bedrock, then Gemini. A provider that errors,
+  throttles or times out falls through to the next one for that model call. The chain is read every turn and can be reordered on a running
   demo (see [Operator API](#operator-api)). Every call's tokens and estimated
   cost are counted per provider, with optional daily ceilings.
 - **A real sign-in.** "Sign in to Fanmoot" opens the MCP server's own
@@ -68,6 +70,16 @@ browser ──/ws──▶ FastAPI (this repo) ──Streamable HTTP──▶ mc
   they stream, with a captions track that follows the synthesiser's word
   boundaries. The waveform shows the microphone's real spectrum while
   listening.
+- **The trace inspector.** The column beside the device (a sheet on a phone)
+  opens with five facts, each read from the live session: the protocol
+  version `initialize` negotiated, the transport and its `Mcp-Session-Id`, the
+  PKCE method the authorization server advertises (or the grant the session
+  holds), the server's `serverInfo`, and the model that answered last. Below
+  them, each request and its response are one row, with direction, status and
+  round trip. Tool calls are graded against a 400 ms budget. Open a row for the
+  pretty-printed JSON-RPC payload. **Copy as cURL** gives a script that opens
+  its own session on `mcp.fanmoot.com` and sends the same request, so anything
+  on the trace can be reproduced from a terminal.
 - **Live scores before anyone speaks.** While a visitor is connected, their
   session calls `live_scores` on a timer. With nothing in play it calls
   `upcoming_matches` instead. These calls appear on the trace marked
@@ -132,7 +144,7 @@ set:
 |---|---|---|
 | `FMD_PUBLIC_BASE_URL` | `http://localhost:8090` | This demo's origin. `/ws` accepts it, and the OAuth redirect URI is built from it |
 | `FMD_MCP_URL` | `https://mcp.fanmoot.com/mcp` | The MCP server the demo drives |
-| `FMD_MODEL_CHAIN` | Nova Pro, Claude, Gemini | LiteLLM model ids, tried in order. Each needs its provider prefix: `bedrock/…`, `gemini/…` |
+| `FMD_MODEL_CHAIN` | Nova Pro, Claude, Gemini | LiteLLM model ids, tried in the order given. `bedrock/…` and `gemini/…` prefixes are added to bare Bedrock and Gemini ids (`gemini-3.1-flash-lite` → `gemini/gemini-3.1-flash-lite`) |
 | `FMD_AWS_REGION` | `us-east-1` | Bedrock region. Enable each model in the Bedrock console for it |
 | `FMD_AWS_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` | *(empty)* | Bedrock keys. Empty means the standard AWS credential chain |
 | `FMD_GEMINI_API_KEY` | *(empty)* | Google AI Studio key. Empty skips the Gemini rung |
@@ -190,7 +202,7 @@ Put Gemini first, from the next turn on, without a redeploy:
 
 ```bash
 curl -X PUT -H "Authorization: Bearer $FMD_ADMIN_TOKEN" -H "Content-Type: application/json" \
-  -d '{"chain": ["gemini/gemini-2.5-flash", "bedrock/us.amazon.nova-pro-v1:0"]}' \
+  -d '{"chain": ["gemini/gemini-3.1-flash-lite", "bedrock/us.amazon.nova-pro-v1:0"]}' \
   https://alexaplus.fanmoot.com/api/admin/models
 ```
 

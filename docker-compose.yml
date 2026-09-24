@@ -41,7 +41,7 @@ services:
       FMD_SESSION_TURN_CAP: ${FMD_SESSION_TURN_CAP:-40}
 
       # ── The model chain (HAD-9) ─────────────────────────────────────────
-      FMD_MODEL_CHAIN: ${FMD_MODEL_CHAIN:-bedrock/us.amazon.nova-pro-v1:0,bedrock/us.anthropic.claude-sonnet-4-6,gemini/gemini-2.5-flash}
+      FMD_MODEL_CHAIN: ${FMD_MODEL_CHAIN:-bedrock/us.amazon.nova-pro-v1:0,bedrock/us.anthropic.claude-sonnet-4-6,gemini/gemini-3.1-flash-lite}
       FMD_AWS_REGION: ${FMD_AWS_REGION:-us-east-1}
       FMD_AWS_ACCESS_KEY_ID: ${FMD_AWS_ACCESS_KEY_ID:-}
       FMD_AWS_SECRET_ACCESS_KEY: ${FMD_AWS_SECRET_ACCESS_KEY:-}

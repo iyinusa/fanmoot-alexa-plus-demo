@@ -610,12 +610,16 @@ class VisitorSession:
         """The trace header strip's facts (W3-4), each read from the live session."""
         chain = models.current_chain(self.settings)
         facts = self.connection.facts
+        discovered = self.oauth.discovered
         self.send(
             {
                 "type": "facts",
                 "mcp": facts.public() if facts else None,
                 "connected": self.connection.connected,
                 "auth": self.auth_state(),
+                # What the authorization server advertises, from its own
+                # metadata — known before anyone signs in.
+                "oauth": discovered.public() if discovered else None,
                 "models": {
                     "chain": [rung.qualified for rung in chain],
                     "primary": chain[0].qualified if chain else None,
@@ -642,6 +646,16 @@ class VisitorSession:
         except McpUnavailable as exc:
             log.warning("mcp_connect_failed", error=str(exc)[:200])
         self.send_facts()
+        if self.connection.connected and self.oauth.discovered is None:
+            # Discovery ahead of any sign-in, so the header strip's OAuth fact
+            # is the server's own word (W3-4). Cached per process, so only the
+            # first visitor in an hour sees these requests on their trace.
+            try:
+                await self.oauth.server_auth(self.tracer)
+            except (OAuthError, ValueError, KeyError) as exc:
+                log.info("oauth_discovery_skipped", error=str(exc)[:200])
+            else:
+                self.send_facts()
 
     def attach(self) -> asyncio.Queue[dict[str, Any]]:
         self.detached_at = None

@@ -15,7 +15,7 @@ from tests.scripted import ScriptedLlm, say
 
 
 async def test_refuses_a_chain_that_is_not_bedrock(tmp_path: Path) -> None:
-    assert await capture(["gemini/gemini-2.5-flash"], tmp_path) == 1
+    assert await capture(["gemini/gemini-3.1-flash-lite"], tmp_path) == 1
     assert list(tmp_path.iterdir()) == []
 
 

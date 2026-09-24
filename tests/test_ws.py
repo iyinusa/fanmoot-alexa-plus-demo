@@ -14,6 +14,7 @@ from starlette.websockets import WebSocketDisconnect
 from app.main import create_app
 from app.settings import Settings
 from app.ws import WIRE_VERSION
+from tests.fake_as import ISSUER, FakeAuthorizationServer
 from tests.fake_mcp import RunningServer
 from tests.scripted import ScriptedLlm, call, say
 from tests.test_runtime import _Hanging
@@ -59,7 +60,7 @@ def test_greets_with_hello(client: TestClient) -> None:
 
     assert hello["type"] == "hello"
     assert hello["service"] == "fanmoot-alexa-plus-demo"
-    assert hello["wire"] == WIRE_VERSION == 3
+    assert hello["wire"] == WIRE_VERSION == 4
     assert hello["mcp_url"] == "https://mcp.fanmoot.test/mcp"
     assert len(hello["session_id"]) >= 16
     assert len(hello["resume_token"]) >= 32
@@ -156,6 +157,22 @@ def test_facts_are_read_from_the_live_session(live_client: TestClient) -> None:
     assert facts["mcp"]["transport"] == "Streamable HTTP"
     assert facts["mcp"]["server_name"] == "fanmoot-fake"
     assert facts["models"]["primary"] == "scripted/primary"
+
+
+def test_facts_carry_what_the_authorization_server_advertises(live_client: TestClient) -> None:
+    oauth = live_client.app.state.registry.oauth  # type: ignore[attr-defined]
+    oauth._transport = FakeAuthorizationServer().transport
+
+    with live_client.websocket_connect("/ws") as socket:
+        facts = until(socket, "facts")
+        # The first facts go out as soon as the MCP session is up; discovery
+        # follows, before anyone has signed in.
+        while facts["oauth"] is None:
+            facts = until(socket, "facts")
+
+    assert facts["oauth"]["pkce"] == "S256"
+    assert facts["oauth"]["issuer"] == ISSUER
+    assert facts["auth"]["method"] is None  # advertised is not the same as held
 
 
 def test_a_turn_over_the_socket(live_client: TestClient) -> None:

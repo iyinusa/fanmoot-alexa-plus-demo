@@ -25,15 +25,32 @@ from app.settings import DEFAULT_MODEL_CHAIN, Settings
 from tests.scripted import ScriptedLlm, fail, say
 
 
+def test_the_chain_is_tried_in_the_order_given_with_bare_ids_qualified() -> None:
+    chain = parse_chain(
+        "gemini-3.1-flash-lite, us.amazon.nova-pro-v1:0, anthropic.claude-x, gpt-4o"
+    )
+
+    assert [rung.qualified for rung in chain] == [
+        "gemini/gemini-3.1-flash-lite",
+        "bedrock/us.amazon.nova-pro-v1:0",
+        "bedrock/anthropic.claude-x",
+        "gpt-4o",  # not recognised, so left exactly as written
+    ]
+    assert [rung.provider for rung in chain[:2]] == ["gemini", "bedrock"]
+    assert chain[0].model_id == "gemini-3.1-flash-lite"
+    # A bare id and its qualified twin are one rung, not two.
+    assert len(parse_chain("gemini-3.1-flash-lite,gemini/gemini-3.1-flash-lite")) == 1
+
+
 def test_the_chain_parses_in_order_without_duplicates() -> None:
     chain = parse_chain(
-        " bedrock/us.amazon.nova-pro-v1:0, gemini/gemini-2.5-flash,\n"
+        " bedrock/us.amazon.nova-pro-v1:0, gemini/gemini-3.1-flash-lite,\n"
         "bedrock/us.amazon.nova-pro-v1:0 ,"
     )
 
     assert [rung.qualified for rung in chain] == [
         "bedrock/us.amazon.nova-pro-v1:0",
-        "gemini/gemini-2.5-flash",
+        "gemini/gemini-3.1-flash-lite",
     ]
     assert [rung.position for rung in chain] == [0, 1]
     assert chain[0].provider == "bedrock"
@@ -60,7 +77,7 @@ def test_an_override_replaces_the_chain_for_the_next_turn() -> None:
 
 
 def test_a_rung_without_its_credentials_is_named_as_such() -> None:
-    gemini = ModelRung("gemini/gemini-2.5-flash", 0)
+    gemini = ModelRung("gemini/gemini-3.1-flash-lite", 0)
     bedrock = ModelRung("bedrock/us.amazon.nova-pro-v1:0", 0)
 
     assert (
@@ -82,13 +99,13 @@ def test_credentials_are_passed_to_the_model_not_the_environment(
     )
 
     bedrock = models.build_llm(ModelRung("bedrock/us.amazon.nova-pro-v1:0", 0), settings)
-    gemini = models.build_llm(ModelRung("gemini/gemini-2.5-flash", 1), settings)
+    gemini = models.build_llm(ModelRung("gemini/gemini-3.1-flash-lite", 1), settings)
 
     assert bedrock._additional_args["aws_region_name"] == "eu-west-2"  # type: ignore[attr-defined]
     assert bedrock._additional_args["aws_access_key_id"] == "AKIA"  # type: ignore[attr-defined]
     assert bedrock._additional_args["num_retries"] == 0  # type: ignore[attr-defined]
     # Gemini goes through ADK's native class, with its key on the instance.
-    assert gemini.model == "gemini-2.5-flash"
+    assert gemini.model == "gemini-3.1-flash-lite"
     assert gemini.client_kwargs["api_key"] == "g"  # type: ignore[attr-defined]
     assert "AWS_ACCESS_KEY_ID" not in os.environ
 

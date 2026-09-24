@@ -65,6 +65,27 @@ async def test_the_authorize_url_is_built_from_discovery() -> None:
     assert start["payload"]["state"] == "[redacted]"
 
 
+async def test_discovery_is_kept_and_its_requests_can_be_replayed() -> None:
+    server = FakeAuthorizationServer()
+    oauth, tracer, frames = _client(server)
+    assert oauth.discovered is None
+
+    await oauth.server_auth(tracer)
+
+    # What the header strip states (W3-4) is what the server advertised.
+    assert oauth.discovered is not None
+    assert oauth.discovered.public()["pkce"] == "S256"
+    # Each request frame names its address, for "copy as cURL" (W3-6).
+    sent = [f for f in frames if f["kind"] == "oauth" and f["dir"] == "out"]
+    assert [f["url"] for f in sent] == [
+        f"{ISSUER}/.well-known/oauth-protected-resource/mcp",
+        f"{ISSUER}/.well-known/oauth-authorization-server",
+    ]
+    # And a second look is served from memory, with nothing on the trace.
+    await oauth.server_auth(tracer)
+    assert len(server.requests) == 2
+
+
 async def test_an_https_deployment_uses_a_client_id_metadata_document() -> None:
     server = FakeAuthorizationServer()
     oauth = DemoOAuthClient(

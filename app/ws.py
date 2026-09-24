@@ -26,7 +26,8 @@ asked for it.
 
 ``hello``      the build and wire version, and the session's id and resume token
 ``session``    the session's state — identity, sign-in URL, turns left
-``facts``      what the live MCP session reports about itself (W3-4)
+``facts``      what the live MCP session and its authorization server report
+               about themselves — the trace header strip (W3-4)
 ``auth``       the fan's identity changed
 ``auth.required``  the server asked for a grant mid-turn
 ``turn.start`` · ``text.delta`` · ``tool.start`` · ``tool.end`` · ``view.resource``
@@ -61,7 +62,9 @@ log = get_logger("ws")
 #: shape, so a tab left open across a deploy can tell it needs a reload.
 #: 2: W1's session and turn protocol.
 #: 3: W2 — ``view.call`` / ``view.call.result`` and ``ambient``.
-WIRE_VERSION = 3
+#: 4: W3 — ``facts.oauth`` (the server's advertised PKCE method), and the
+#:    request ``url`` on OAuth trace frames, for "copy as cURL".
+WIRE_VERSION = 4
 
 #: The longest thing a fan can ask. A sentence said aloud, with room to spare.
 MAX_TURN_CHARS = 1_000

@@ -1,8 +1,12 @@
 """The model chain: resolved per turn, failed over per call (HAD-9, W1-3, W1-3b).
 
-``FMD_MODEL_CHAIN`` names LiteLLM model ids in order —
-``bedrock/us.amazon.nova-pro-v1:0`` first, a Claude on Bedrock second, Gemini
-third. Four properties, each deliberate:
+``FMD_MODEL_CHAIN`` names LiteLLM model ids, and **the order it gives is the
+order they are tried** — nothing here prefers one provider over another. Put
+Gemini first and Gemini answers; put Nova first and Nova does. An id written
+without its provider (``gemini-3.1-flash-lite``) has the provider inferred from
+its name (``qualify``), because LiteLLM would otherwise take a bare id for an
+OpenAI model and the rung would fail on every call. Four properties, each
+deliberate:
 
 **Read per turn.** ``current_chain()`` is called at the start of every turn,
 and ``PUT /api/admin/models`` replaces it in memory, so the chain can be
@@ -73,10 +77,42 @@ class ModelRung:
         return self.qualified.partition("/")[2] or self.qualified
 
 
+#: Bare model ids, by the start of their name, and the provider that serves
+#: them. Bedrock's ids carry the vendor (``amazon.``, ``anthropic.``), often
+#: behind a cross-region inference prefix (``us.``, ``eu.``, ``apac.``).
+_BARE_PROVIDERS = (
+    (("gemini-", "gemma-"), "gemini"),
+    (
+        tuple(
+            f"{region}{vendor}."
+            for region in ("", "us.", "eu.", "apac.", "global.")
+            for vendor in ("amazon", "anthropic", "meta", "mistral", "cohere", "ai21", "deepseek")
+        ),
+        "bedrock",
+    ),
+)
+
+
+def qualify(name: str) -> str:
+    """``name`` with its provider prefix, inferred when it was left off.
+
+    ``gemini-3.1-flash-lite`` becomes ``gemini/gemini-3.1-flash-lite`` and
+    ``us.amazon.nova-pro-v1:0`` becomes ``bedrock/us.amazon.nova-pro-v1:0``.
+    Anything already prefixed, or not recognised, is left exactly as written.
+    """
+    if "/" in name:
+        return name
+    lowered = name.lower()
+    for prefixes, provider in _BARE_PROVIDERS:
+        if lowered.startswith(prefixes):
+            return f"{provider}/{name}"
+    return name
+
+
 def parse_chain(raw: str) -> list[ModelRung]:
     names: list[str] = []
     for item in raw.replace("\n", ",").split(","):
-        name = item.strip()
+        name = qualify(item.strip()) if item.strip() else ""
         if name and name not in names:
             names.append(name)
     return [ModelRung(qualified=name, position=index) for index, name in enumerate(names)]

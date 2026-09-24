@@ -6,6 +6,11 @@
  * so a reply half-typed into the thread card survives a look at the
  * scoreboard. Only the top card is operable; the edges behind it are drawn,
  * not rendered twice.
+ *
+ * A card may carry a `label` and a `link` of its own: a take just posted, read
+ * back from Fanmoot (W4-4). It is named for what it proves — "Live on
+ * fanmoot.com" — and the take's page on fanmoot.com is one tap away, because
+ * fanmoot.com itself cannot be framed here.
  */
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
@@ -16,6 +21,14 @@ import { CloseIcon, ExpandIcon, ExternalIcon } from '@/shell/Icons'
 import { type DisplayMode, type ViewHost, ViewFrame } from '@/views/ViewFrame'
 
 const EASE = [0.22, 1, 0.36, 1] as const
+
+function hostOf(link: string): string {
+  try {
+    return new URL(link).host
+  } catch {
+    return 'the web'
+  }
+}
 
 /** "ui://fanmoot/scoreboard" → "Scoreboard". */
 export function viewLabel(uri: string): string {
@@ -76,7 +89,7 @@ export function CardStack({
                   : 'border-line text-muted hover:text-ink'
               }`}
             >
-              {viewLabel(card.uri)}
+              {card.label ?? viewLabel(card.uri)}
             </button>
           ))}
         </div>
@@ -133,15 +146,31 @@ export function CardStack({
                     theme={theme}
                     mode={mode}
                     version={version}
-                    title={`${viewLabel(card.uri)} — from ${card.tool}`}
+                    title={`${card.label ?? viewLabel(card.uri)} — from ${card.tool}`}
                     interactive={active}
                   />
                 </div>
                 {active && (
                   <div className="mt-1.5 flex items-center gap-2 px-1 text-[11px] text-faint">
+                    {card.label && (
+                      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--fm-green)]/15 px-2 py-0.5 font-bold text-ink">
+                        <span aria-hidden="true" className="size-1.5 rounded-full bg-[var(--fm-green-bright)]" />
+                        {card.label}
+                      </span>
+                    )}
                     <span className="truncate font-mono">
                       {card.uri} · {card.tool}
                     </span>
+                    {card.link && (
+                      <a
+                        href={card.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex shrink-0 items-center gap-1 text-accent hover:underline"
+                      >
+                        Open on {hostOf(card.link)} <ExternalIcon size={12} />
+                      </a>
+                    )}
                     <button
                       type="button"
                       onClick={() => onExpand(mode !== 'fullscreen')}

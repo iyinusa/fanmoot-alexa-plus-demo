@@ -124,6 +124,20 @@ class Settings(BaseSettings):
     # account's allowance as well; this bounds a card that loops.
     view_calls_per_session: int = 30
 
+    # ── Guided scenarios (W4) ────────────────────────────────────────────────
+    # The scenario chips are written from what is actually on — the match in
+    # play, tonight's fixtures, the result fans are still arguing about — so a
+    # judge on a quiet Wednesday is not offered a derby nobody is playing.
+    # This is how long one reading of that is kept, for every visitor on this
+    # process. 0 turns the reading off, and the chips fall back to the
+    # add-on's fixed example phrases (S8-1).
+    guide_ttl_s: float = 300.0
+    # Competitions a scenario prefers when it has a choice, most preferred
+    # first. A judge is likelier to know Arsenal than Andorra.
+    guide_competitions: str = (
+        "Premier League,Champions League,LaLiga,Serie A,Bundesliga,Ligue 1,Europa League"
+    )
+
     # ── The model chain (HAD-9, W1-3) ────────────────────────────────────────
     # Comma-separated LiteLLM model ids, tried in order. The chain is read at
     # the start of every turn, and `PUT /api/admin/models` replaces it in

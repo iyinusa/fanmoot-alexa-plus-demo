@@ -153,6 +153,8 @@ set:
 | `FMD_DEMO_FAN_EMAIL` / `_PASSWORD` | *(empty)* | A real Fanmoot account visitors may post as. Empty hides the option |
 | `FMD_ADMIN_TOKEN` | *(empty)* | Bearer token for `/api/admin/models`. Empty disables it |
 | `FMD_AMBIENT_INTERVAL_S` | `30` | Seconds between the ticker's `live_scores` calls. `0` turns the ticker off |
+| `FMD_GUIDE_TTL_S` | `300` | Seconds the guided scenarios' reading of what is on is kept. `0` uses fixed phrases |
+| `FMD_GUIDE_COMPETITIONS` | Premier League, … | Competitions a scenario prefers, most preferred first |
 
 ### How the demo signs in as a client
 

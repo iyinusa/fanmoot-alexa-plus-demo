@@ -1,5 +1,5 @@
 /**
- * The `/ws` wire protocol, version 4 (W1-5, W2, W3). Mirrors app/ws.py,
+ * The `/ws` wire protocol, version 5 (W1-5, W2, W3, W4). Mirrors app/ws.py,
  * app/session.py and app/agent/runtime.py — a frame changed there is changed
  * here, and WIRE_VERSION goes up.
  *
@@ -7,7 +7,7 @@
  * knows about a turn, it learns from these frames.
  */
 
-export const WIRE_VERSION = 4
+export const WIRE_VERSION = 5
 
 // ── Browser → server ─────────────────────────────────────────────────────────
 export type ClientFrame =
@@ -138,8 +138,9 @@ export type TraceFrame = {
   tokens_out?: number
   cost_usd?: number | null
   model_version?: string | null
-  /** Who asked, when it was not the agent: a card's button, or the ticker. */
-  origin?: 'view' | 'ambient'
+  /** Who asked, when it was not the agent: a card's button, the ticker, the
+   * guided scenarios reading what is on, or a post being read back (W4). */
+  origin?: 'view' | 'ambient' | 'guide' | 'verify'
 }
 
 /** A match as the corner ticker keeps it (W2-7): `fanmoot-mcp`'s MatchCard, trimmed. */
@@ -174,6 +175,24 @@ export type Ambient = {
   matches: TickerMatch[]
   spoken: string
   at: number
+}
+
+/** One guided scenario (W4, app/guided.py): lines for the fan to say, in order. */
+export type Scenario = {
+  id: string
+  title: string
+  blurb: string
+  steps: string[]
+  /** Why these words today — "Brentford v Chelsea · Last Friday · 3 takes". */
+  basis: string
+  /** The tool whose success finishes it: `post_moot`, `predict_match`. */
+  goal: string | null
+  /** Said again once the fan has signed in. */
+  retry: string | null
+  /** Said again after a refusal the fan can fix — an unconfirmed email. */
+  retry_refused: string | null
+  /** Its sign-in opens on the sign-up form. */
+  signup: boolean
 }
 
 /** A tool's answer as JSON — MCP's CallToolResult. */
@@ -232,9 +251,15 @@ export type ServerFrame =
       tool: string
       input: Record<string, unknown>
       result: Record<string, unknown>
+      /** Set when the card is not simply the tool's answer — a post read back
+       * from Fanmoot (W4-4) — with the take's own address. */
+      label?: string
+      link?: string
     }
   | { type: 'trace'; frame: TraceFrame }
   | Ambient
+  /** The guided scenarios' chips; `live_data` false means the fixed phrases. */
+  | { type: 'scenarios'; live_data: boolean; scenarios: Scenario[] }
   | {
       type: 'view.call.result'
       id: number

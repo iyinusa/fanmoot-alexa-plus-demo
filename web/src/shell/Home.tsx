@@ -7,7 +7,6 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
 
 import type { Ambient } from '@/lib/protocol'
-import { SUGGESTIONS } from '@/conversation/Composer'
 import { TickerBoard } from '@/shell/Ticker'
 import { useClock } from '@/shell/useClock'
 
@@ -20,12 +19,24 @@ function greeting(hour: number): string {
   return 'Good evening'
 }
 
-export function Home({ ambient, canListen }: { ambient: Ambient | null; canListen: boolean }) {
+/** "What's on?" → "what's on?" after "Alexa,", but "I'm new…" stays "I'm". */
+function afterWakeWord(line: string): string {
+  return /^I\b/.test(line) ? line : line.charAt(0).toLowerCase() + line.slice(1)
+}
+
+/** Said before the scenarios arrive, and true on any day. */
+const FIRST_LINE = "What's on this week?"
+
+export function Home({ ambient, canListen, lines }: { ambient: Ambient | null; canListen: boolean; lines: string[] }) {
   const now = useClock()
   const [hint, setHint] = useState(0)
+  // The scenarios' opening lines (W4), so what the screen suggests saying is
+  // what the chips below it will say — written from what is on today.
+  const said = lines.length > 0 ? lines : [FIRST_LINE]
+  const line = said[hint % said.length]!
 
   useEffect(() => {
-    const timer = window.setInterval(() => setHint((i) => (i + 1) % SUGGESTIONS.length), 5200)
+    const timer = window.setInterval(() => setHint((i) => i + 1), 5200)
     return () => window.clearInterval(timer)
   }, [])
 
@@ -43,14 +54,14 @@ export function Home({ ambient, canListen }: { ambient: Ambient | null; canListe
           <div className="relative mt-1 min-h-[4.5rem] @3xl:min-h-[5.5rem]">
             <AnimatePresence mode="wait">
               <motion.p
-                key={hint}
+                key={line}
                 initial={{ opacity: 0, y: 12, filter: 'blur(6px)' }}
                 animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
                 exit={{ opacity: 0, y: -10, filter: 'blur(6px)' }}
                 transition={{ duration: 0.5, ease: EASE }}
                 className="text-2xl font-light leading-snug text-ink @3xl:text-3xl"
               >
-                “Alexa, {SUGGESTIONS[hint]!.charAt(0).toLowerCase() + SUGGESTIONS[hint]!.slice(1)}”
+                “Alexa, {afterWakeWord(line)}”
               </motion.p>
             </AnimatePresence>
           </div>

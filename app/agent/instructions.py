@@ -73,10 +73,16 @@ def identity_line(mode: str, *, handle: str | None, label: str | None, scopes: l
             "posts are limited; if a tool says the limit is reached, suggest they sign in as "
             "themselves."
         )
+    # Not "sign in first": a model told that declines to call the tool at all,
+    # and then Fanmoot never answers 401 — which is what puts the sign-in on
+    # the screen, as Alexa's account linking starts from a tool's 401 (S4-9).
+    # Found in a real run (W4), where "Yes, post it" called nothing.
     return (
         "The fan is not signed in. Every read tool works. Posting, replying, reacting, "
-        "predicting, following, whoami and my_predictions need them to sign in first — or "
-        "to use the demo account, which is also on the screen."
+        "predicting, following, whoami and my_predictions act as the fan and need an "
+        "account — but do not decide that for Fanmoot. Once the fan has said yes, call the "
+        "tool: Fanmoot answers that it needs a sign-in, and that answer is what puts the "
+        "sign-in button on the screen. Never tell them to sign in instead of calling it."
     )
 
 

@@ -79,6 +79,9 @@ class ServerAuth:
     code_challenge_methods: list[str]
     iss_parameter_supported: bool
     metadata_documents_supported: bool
+    #: ``prompt`` values the server honours. ``create`` opens the flow on the
+    #: sign-up form, which the "New here" scenario asks for (W4-5).
+    prompt_values: list[str] = field(default_factory=list)
 
     def public(self) -> dict[str, Any]:
         return {
@@ -220,6 +223,7 @@ class DemoOAuthClient:
                 meta.get("authorization_response_iss_parameter_supported")
             ),
             metadata_documents_supported=bool(meta.get("client_id_metadata_document_supported")),
+            prompt_values=[str(v) for v in meta.get("prompt_values_supported") or []],
         )
 
     # ── Who this demo is ─────────────────────────────────────────────────────
@@ -290,8 +294,16 @@ class DemoOAuthClient:
             return self._registered
 
     # ── The flow ─────────────────────────────────────────────────────────────
-    async def begin(self, tracer: Tracer) -> tuple[str, PendingAuthorization]:
-        """The ``/authorize`` URL to send the fan to, and what to remember."""
+    async def begin(
+        self, tracer: Tracer, *, signup: bool = False
+    ) -> tuple[str, PendingAuthorization]:
+        """The ``/authorize`` URL to send the fan to, and what to remember.
+
+        ``signup`` asks for ``prompt=create`` — the sign-up form first — but
+        only of a server that says it honours it. One that does not would
+        ignore an unknown prompt at best, so it is not sent, and the fan finds
+        the sign-up link on the ordinary sign-in page instead.
+        """
         auth = await self.server_auth(tracer)
         if PKCE_METHOD not in auth.code_challenge_methods:
             raise OAuthError("pkce_unsupported", "The authorization server does not offer S256.")
@@ -314,12 +326,17 @@ class DemoOAuthClient:
             "code_challenge_method": PKCE_METHOD,
             "resource": auth.resource,
         }
+        if signup and "create" in auth.prompt_values:
+            query["prompt"] = "create"
         url = f"{auth.authorization_endpoint}?{urlencode(query)}"
         tracer.emit(
             "oauth",
             direction="out",
             method="GET /authorize",
-            summary=f"Sending the fan to sign in — PKCE {PKCE_METHOD}, client {client.mode}",
+            summary=(
+                f"Sending the fan to {'sign up' if 'prompt' in query else 'sign in'}"
+                f" — PKCE {PKCE_METHOD}, client {client.mode}"
+            ),
             payload={**query, "client_id": client.client_id},
             pkce=PKCE_METHOD,
             client_mode=client.mode,

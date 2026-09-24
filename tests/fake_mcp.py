@@ -29,6 +29,7 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import uvicorn
@@ -50,6 +51,36 @@ def _known(token: str) -> bool:
 INSTRUCTIONS = "Fake Fanmoot. Say scorelines out loud. Templating must not touch {this}."
 
 VIEW_HTML = "<!doctype html><title>scoreboard</title><div id=app></div>"
+THREAD_HTML = "<!doctype html><title>thread</title><div id=app></div>"
+
+#: Where a posted take lives, so the read-back (W4-4) has a link to follow.
+POSTED_URL = "https://fanmoot.com/m/abc123"
+
+
+def match_card(
+    home: str,
+    away: str,
+    *,
+    status: str,
+    hours: float,
+    competition: str = "Premier League",
+    takes: int = 0,
+    score: tuple[int, int] | None = None,
+) -> dict[str, Any]:
+    """A MatchCard as `fanmoot-mcp` shapes one, kicking off `hours` from now."""
+    kickoff = datetime.now(UTC) + timedelta(hours=hours)
+    return {
+        "id": f"{home}-{away}".lower(),
+        "status": status,
+        "competition": competition,
+        "kickoff_at": kickoff.isoformat(),
+        "kickoff_spoken": "last Friday" if hours < 0 else "at quarter to eight tonight",
+        "home": {"name": home, "short_name": home, "score": score[0] if score else None},
+        "away": {"name": away, "short_name": away, "score": score[1] if score else None},
+        "score_confirmed": score is not None,
+        "take_count": takes,
+    }
+
 
 _NEEDS: dict[str, str] = {"post_moot": "moot.write", "whoami": "fan.read"}
 
@@ -85,6 +116,37 @@ def build_server() -> FastMCP:
             {"matches": [{"id": "m1", "home": "Arsenal", "away": "Spurs", "score": [2, 1]}]},
         )
 
+    @mcp.tool(name="upcoming_matches", description="What's on, by day.", annotations=read_only)
+    def upcoming_matches(days: int = 14, limit: int = 5) -> CallToolResult:
+        tonight = match_card(
+            "Norway", "Denmark", status="scheduled", hours=5, competition="Nations"
+        )
+        return _answer(
+            "Norway play Denmark at quarter to eight tonight.",
+            {},
+            {"days": [{"day": "today", "matches": [tonight]}]},
+        )
+
+    @mcp.tool(name="list_matches", description="Fixtures and results.", annotations=read_only)
+    def list_matches(status: str | None = None, limit: int = 5) -> CallToolResult:
+        result = match_card(
+            "Brentford", "Chelsea", status="finished", hours=-150, takes=3, score=(3, 0)
+        )
+        return _answer("Brentford beat Chelsea three-nil.", {}, {"matches": [result]})
+
+    @mcp.tool(
+        name="read_thread",
+        description="One take and its replies.",
+        annotations=read_only,
+        meta={"ui": {"visibility": ["model", "app"], "resourceUri": "ui://fanmoot/thread"}},
+    )
+    def read_thread(take: str, limit: int = 5) -> CallToolResult:
+        return _answer(
+            "Demo Fan says: “Brentford fully deserved that win.”",
+            {"take": {"url": take}},
+            {"take": {"id": "p1", "url": POSTED_URL, "body": "Brentford fully deserved that win."}},
+        )
+
     @mcp.tool(name="find_club", description="Resolve a club nickname.", annotations=read_only)
     def find_club(name: str) -> CallToolResult:
         return _answer(
@@ -97,7 +159,14 @@ def build_server() -> FastMCP:
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False),
     )
     def post_moot(body: str) -> CallToolResult:
-        return _answer("Posted. It's live.", {"moot": {"id": "p1"}}, {"held": False, "body": body})
+        # "Held" in the words is the fake's switch for Fanmoot's gate: a take
+        # it could not tell was about football, held for review (HAD-7).
+        held = "held" in body.lower()
+        return _answer(
+            "Held for review." if held else "Posted. It's live.",
+            {"moot": {"id": "p1"}},
+            {"held": held, "body": body, "take": {"id": "p1", "url": POSTED_URL, "body": body}},
+        )
 
     @mcp.tool(name="whoami", description="The signed-in fan.", annotations=read_only)
     def whoami() -> CallToolResult:
@@ -129,6 +198,14 @@ def build_server() -> FastMCP:
     )
     def scoreboard() -> str:
         return VIEW_HTML
+
+    @mcp.resource(
+        "ui://fanmoot/thread",
+        name="thread",
+        mime_type="text/html;profile=mcp-app",
+    )
+    def thread() -> str:
+        return THREAD_HTML
 
     return mcp
 

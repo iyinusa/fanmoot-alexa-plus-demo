@@ -119,7 +119,16 @@ async def test_the_tools_offered_are_the_servers_own(mcp_server: RunningServer) 
     offered = set(llm.requests[0].tools_dict)
     # From tools/list at runtime — minus the one the MCP Apps `visibility`
     # reserves for a view.
-    assert offered == {"live_scores", "find_club", "post_moot", "whoami", "model_only_hint"}
+    assert offered == {
+        "live_scores",
+        "upcoming_matches",
+        "list_matches",
+        "read_thread",
+        "find_club",
+        "post_moot",
+        "whoami",
+        "model_only_hint",
+    }
     declaration = llm.requests[0].tools_dict["live_scores"]._get_declaration()
     assert declaration.parameters_json_schema["properties"]["limit"]["type"] == "integer"
 
@@ -140,6 +149,11 @@ async def test_the_instruction_carries_the_persona_the_server_and_the_fan(
     # The server's own instructions, verbatim — braces and all.
     assert fake_mcp.INSTRUCTIONS in instruction
     assert "The fan is not signed in" in instruction
+    # Signed out, a confirmed post is still *called*: the server's 401 is what
+    # starts the sign-in (S4-9). Told "sign in first", a real model called
+    # nothing and the sign-in never appeared (found in W4's browser run).
+    assert "call the tool" in instruction
+    assert "Never tell them to sign in instead of calling it" in instruction
 
 
 async def test_the_model_reads_what_the_server_wrote_for_models(mcp_server: RunningServer) -> None:

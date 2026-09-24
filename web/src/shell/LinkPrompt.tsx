@@ -3,6 +3,10 @@
  * answered a `tools/call` with a 401 (no grant) or a 403 (a grant without
  * the scope). "Sign in to Fanmoot" opens the real `mcp.fanmoot.com/authorize`
  * in a popup (W1-7); nothing about the flow is simulated.
+ *
+ * In the "New here" scenario (W4-5) it leads with creating an account: the
+ * popup opens on Fanmoot's own sign-up form (`prompt=create`), and the shared
+ * demo account is not offered, because the point is a fan of their own.
  */
 import { motion } from 'framer-motion'
 
@@ -16,14 +20,17 @@ export function LinkPrompt({
   signIn,
   useDemo,
   dismiss,
+  signup = false,
 }: {
   required: AuthRequired
   auth: AuthState | null
-  signIn: () => void
+  signIn: (options?: { signup?: boolean }) => void
   useDemo: () => void
   dismiss: () => void
+  signup?: boolean
 }) {
   const scoped = required.status === 403 && auth?.mode === 'linked'
+  const joining = signup && !scoped
   return (
     <motion.div
       role="dialog"
@@ -42,7 +49,7 @@ export function LinkPrompt({
         <img src="/icons/icon-192.png" alt="" width={40} height={40} className="rounded-fm-sm" />
         <div>
           <h2 id="link-title" className="text-base leading-tight">
-            {scoped ? 'Fanmoot needs one more permission' : 'Link your Fanmoot account'}
+            {scoped ? 'Fanmoot needs one more permission' : joining ? 'Join Fanmoot to post' : 'Link your Fanmoot account'}
           </h2>
           <p className="mt-0.5 font-mono text-[11px] text-faint">
             {required.tool} · HTTP {required.status}
@@ -53,13 +60,24 @@ export function LinkPrompt({
       <p className="mt-3 text-sm text-muted">
         {scoped
           ? `This sign-in did not grant ${required.scope ?? 'that permission'}. Sign in again and allow it.`
-          : 'Posting goes out under your own handle. You sign in on Fanmoot’s own page — Alexa never sees your password.'}
+          : joining
+            ? 'Create your account on Fanmoot’s own page, confirm your email, and your first take goes out under your new handle. Alexa never sees your password.'
+            : 'Posts and predictions go out under your own handle. You sign in on Fanmoot’s own page — Alexa never sees your password.'}
       </p>
       <div className="mt-4 flex flex-wrap gap-2">
-        <button type="button" onClick={signIn} className="fm-tap rounded-fm-sm bg-[var(--fm-blue)] px-4 font-bold text-white hover:bg-[var(--fm-blue-deep)]">
-          Sign in to Fanmoot
+        <button
+          type="button"
+          onClick={() => signIn({ signup: joining })}
+          className="fm-tap rounded-fm-sm bg-[var(--fm-blue)] px-4 font-bold text-white hover:bg-[var(--fm-blue-deep)]"
+        >
+          {joining ? 'Create a Fanmoot account' : 'Sign in to Fanmoot'}
         </button>
-        {required.demo_available && !scoped && (
+        {joining && (
+          <button type="button" onClick={() => signIn()} className="fm-tap rounded-fm-sm border border-line px-4 text-ink hover:bg-surface">
+            I already have one
+          </button>
+        )}
+        {required.demo_available && !scoped && !joining && (
           <button type="button" onClick={useDemo} className="fm-tap rounded-fm-sm border border-line px-4 text-ink hover:bg-surface">
             Use the demo account
           </button>

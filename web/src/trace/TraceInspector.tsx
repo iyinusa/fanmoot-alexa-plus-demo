@@ -39,6 +39,14 @@ const KIND_TONE: Record<TraceFrame['kind'], string> = {
   session: 'text-muted',
 }
 
+/** Who asked, when it was not the agent. */
+const ORIGIN_LABEL: Record<NonNullable<TraceFrame['origin']>, string> = {
+  view: 'card',
+  ambient: 'ticker',
+  guide: 'guide',
+  verify: 'read-back',
+}
+
 const FILTERS: { id: Filter; label: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'mcp', label: 'MCP' },
@@ -289,7 +297,7 @@ const Row = memo(function Row({
           {exchange.tool && <span className="min-w-0 truncate text-ink">{exchange.tool}</span>}
           {exchange.origin && (
             <span className="shrink-0 rounded bg-raised px-1 text-[9px] uppercase tracking-wide text-muted ring-1 ring-line">
-              {exchange.origin === 'ambient' ? 'ticker' : 'card'}
+              {ORIGIN_LABEL[exchange.origin]}
             </span>
           )}
           {httpStatus && httpStatus >= 400 && (

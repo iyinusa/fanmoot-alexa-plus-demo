@@ -32,6 +32,8 @@ os.environ.setdefault("FMD_DEMO_FAN_EMAIL", "")
 # The corner ticker (W2-7) calls `live_scores` on its own schedule, which would
 # interleave with the calls a test asserts. The tests that are about it turn it on.
 os.environ.setdefault("FMD_AMBIENT_INTERVAL_S", "0")
+# The guided scenarios (W4) read what is on the same way, once per session.
+os.environ.setdefault("FMD_GUIDE_TTL_S", "0")
 
 import pytest
 from fastapi.testclient import TestClient

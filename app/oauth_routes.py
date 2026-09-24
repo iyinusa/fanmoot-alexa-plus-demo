@@ -5,7 +5,8 @@
     frame) says which visitor this is without putting their resume token in a
     URL; it is single-use. The route starts a PKCE authorization on that
     visitor's session and redirects the popup to the real
-    ``mcp.fanmoot.com/authorize``.
+    ``mcp.fanmoot.com/authorize``. With ``&signup=1`` it asks for the sign-up
+    form first (``prompt=create``), for the "New here" scenario (W4-5).
 ``GET /oauth/callback``
     Where the authorization server sends the fan back. The code is redeemed
     **here, server-side** — the browser never sees a token — and the grant is
@@ -51,12 +52,12 @@ def _registry(request: Request) -> SessionRegistry:
 
 
 @router.get("/start")
-async def start(request: Request, ticket: str = "") -> Response:
+async def start(request: Request, ticket: str = "", signup: bool = False) -> Response:
     session = _registry(request).by_ticket(ticket) if ticket else None
     if session is None:
         return _done("error", "This sign-in link has expired. Press Sign in again.")
     try:
-        url = await session.begin_sign_in()
+        url = await session.begin_sign_in(signup=signup)
     except OAuthError as exc:
         log.warning("oauth_start_failed", error=exc.error)
         return _done("error", "Fanmoot's sign-in could not be reached just now.")

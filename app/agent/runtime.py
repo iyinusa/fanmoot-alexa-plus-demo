@@ -70,6 +70,9 @@ SESSIONS = InMemorySessionService()
 #: thread of twenty takes is a large prompt for a two-sentence answer.
 MODEL_DATA_BUDGET = 8_000
 
+#: Writes whose take is read back from Fanmoot once it is live (W4-4).
+READ_BACK = frozenset({"post_moot", "reply_to_moot"})
+
 
 def model_visible(tool: types.Tool) -> bool:
     """Whether the agent may call this tool (MCP Apps ``visibility``)."""
@@ -367,6 +370,12 @@ class Turn:
 
         if is_write(tool):
             session.spent_write(tool)
+            structured = result.structuredContent or {}
+            take = structured.get("take")
+            # A held take is not live, and must not be shown as if it were
+            # (HAD-7): only one Fanmoot published is read back.
+            if tool.name in READ_BACK and isinstance(take, dict) and not structured.get("held"):
+                session.show_live(take, turn_id=self.turn_id, call_id=call_id)
         uri = view_uri(tool)
         if uri is not None:
             await session.send_view(

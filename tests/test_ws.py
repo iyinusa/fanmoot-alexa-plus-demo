@@ -60,7 +60,7 @@ def test_greets_with_hello(client: TestClient) -> None:
 
     assert hello["type"] == "hello"
     assert hello["service"] == "fanmoot-alexa-plus-demo"
-    assert hello["wire"] == WIRE_VERSION == 4
+    assert hello["wire"] == WIRE_VERSION == 5
     assert hello["mcp_url"] == "https://mcp.fanmoot.test/mcp"
     assert len(hello["session_id"]) >= 16
     assert len(hello["resume_token"]) >= 32

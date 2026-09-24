@@ -35,6 +35,7 @@ asked for it.
 ``trace``      one MCP, OAuth or model frame (``app.agent.trace``)
 ``view.call.result``  a card's call answered: ``result`` or ``error``, by ``id``
 ``ambient``    the corner ticker: what is in play, or what is next (W2-7)
+``scenarios``  the guided scenarios' chips, written from what is on (W4)
 ``error``      something the visitor should know, with a ``code``
 """
 
@@ -64,7 +65,9 @@ log = get_logger("ws")
 #: 3: W2 — ``view.call`` / ``view.call.result`` and ``ambient``.
 #: 4: W3 — ``facts.oauth`` (the server's advertised PKCE method), and the
 #:    request ``url`` on OAuth trace frames, for "copy as cURL".
-WIRE_VERSION = 4
+#: 5: W4 — ``scenarios``; ``label`` and ``link`` on a ``view`` that is a post
+#:    read back from Fanmoot; trace origins ``guide`` and ``verify``.
+WIRE_VERSION = 5
 
 #: The longest thing a fan can ask. A sentence said aloud, with room to spare.
 MAX_TURN_CHARS = 1_000

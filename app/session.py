@@ -51,8 +51,9 @@ from app.agent.oauth import (
     OAuthError,
     PendingAuthorization,
 )
-from app.agent.runtime import APP_NAME, SESSIONS, Turn, app_visible, is_write
+from app.agent.runtime import APP_NAME, SESSIONS, Turn, app_visible, is_write, view_uri
 from app.agent.trace import Tracer
+from app.guided import GuideBoard
 from app.logging_config import get_logger
 from app.settings import Settings
 
@@ -149,11 +150,13 @@ class VisitorSession:
         demo_fan: DemoFan,
         connection_factory: Any = McpConnection,
         llm_factory: models.LlmFactory = models.build_llm,
+        guide: GuideBoard | None = None,
     ) -> None:
         self.settings = settings
         self.oauth = oauth
         self.demo_fan = demo_fan
         self.llm_factory = llm_factory
+        self.guide = guide or GuideBoard(settings)
 
         self.id = secrets.token_urlsafe(12)
         self.resume_token = secrets.token_urlsafe(24)
@@ -189,6 +192,11 @@ class VisitorSession:
         self._ambient_wake = asyncio.Event()
         self._ambient_sent: str | None = None
         self._ambient_next: tuple[float, list[dict[str, Any]], str] | None = None
+        # The guided scenarios (W4): the last frame sent, for a reconnecting
+        # browser, and work a reset must stop — a reading of what is on, and
+        # a post being read back from Fanmoot.
+        self._scenarios_frame: dict[str, Any] | None = None
+        self._guide_tasks: set[asyncio.Task[None]] = set()
 
         self.created = time.time()
         self.last_active = time.time()
@@ -249,10 +257,11 @@ class VisitorSession:
     def sign_in_url(self) -> str:
         return f"/oauth/start?ticket={self.ticket}"
 
-    async def begin_sign_in(self) -> str:
-        """The ``/authorize`` URL for this visitor's popup (W1-7)."""
+    async def begin_sign_in(self, *, signup: bool = False) -> str:
+        """The ``/authorize`` URL for this visitor's popup (W1-7). ``signup``
+        opens it on the sign-up form, for the "New here" scenario (W4-5)."""
         self.touch()
-        url, pending = await self.oauth.begin(self.tracer)
+        url, pending = await self.oauth.begin(self.tracer, signup=signup)
         self.pending = {s: p for s, p in self.pending.items() if not p.expired}
         self.pending[pending.state] = pending
         # A ticket opens one popup: the next sign-in gets a fresh one.
@@ -340,6 +349,8 @@ class VisitorSession:
         tool: types.Tool,
         args: dict[str, Any],
         result: types.CallToolResult,
+        label: str | None = None,
+        link: str | None = None,
     ) -> None:
         """The server's own ``ui://`` view, and the payload it renders.
 
@@ -361,6 +372,10 @@ class VisitorSession:
                 "tool": tool.name,
                 "input": args,
                 "result": result.model_dump(by_alias=True, mode="json", exclude_none=True),
+                # What the card is, when it is not simply the tool's answer —
+                # a post read back from Fanmoot (W4-4) — and where it lives.
+                **({"label": label} if label else {}),
+                **({"link": link} if link else {}),
             }
         )
 
@@ -577,10 +592,100 @@ class VisitorSession:
         return self._adk_session
 
     async def reset(self) -> None:
-        """Forget the conversation; keep the identity and the MCP session (W4-7)."""
+        """Forget the conversation; keep the identity and the MCP session (W4-7).
+
+        One tap, and it has to hold up to a judge pressing it at the worst
+        moment: mid-answer, mid-read-back, twice in a row. So everything that
+        could still put something on the screen is stopped *before* the screen
+        is told to clear — the turn, and the read-back of a post — and nothing
+        started for the old conversation arrives after ``session.reset``.
+        The turn allowance is not refunded: it is the cost guard (HAD-9).
+        """
         await self.cancel_turn()
+        await self._cancel_guide_tasks()
         await self._drop_adk_session()
+        self.tracer.emit(
+            "session",
+            direction="local",
+            method="reset",
+            summary="The visitor started over: the conversation is forgotten, "
+            + ("the sign-in is kept" if self.holder is not None else "nobody was signed in"),
+        )
         self.send({"type": "session.reset"})
+        # The chips may be minutes old; a fresh start gets a fresh reading.
+        self._spawn(self.send_scenarios(), name="scenarios")
+
+    def _spawn(self, work: Any, *, name: str) -> None:
+        task = asyncio.create_task(work, name=f"{name}-{self.id}")
+        self._guide_tasks.add(task)
+        task.add_done_callback(self._guide_tasks.discard)
+
+    async def _cancel_guide_tasks(self) -> None:
+        tasks = list(self._guide_tasks)
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(BaseException):
+                await task
+
+    # ── The guided scenarios (W4) ────────────────────────────────────────────
+    async def send_scenarios(self) -> None:
+        """The scenario chips, written from what is on (``app.guided``)."""
+        try:
+            scenarios, live_data = await self.guide.scenarios(self.connection)
+        except Exception as exc:  # the chips are a convenience; never a crash
+            log.info("scenarios_failed", error=str(exc)[:200])
+            return
+        frame = {
+            "type": "scenarios",
+            "live_data": live_data,
+            "scenarios": [scenario.public() for scenario in scenarios],
+        }
+        self._scenarios_frame = frame
+        self.send(frame)
+
+    def show_live(self, take: dict[str, Any], *, turn_id: str, call_id: str) -> None:
+        """W4-4: the take just posted, read back from Fanmoot, on the card
+        stack beside the conversation.
+
+        fanmoot.com cannot be framed (``frame-ancestors 'none'``), so "shown
+        side by side" is the next best proof: a second, separate ``read_thread``
+        on this session asks Fanmoot for the take by its id, and the server's
+        own thread card renders what came back — with the take's fanmoot.com
+        link one tap away. It runs beside the model's reply rather than in
+        front of it, and a reset cancels it.
+        """
+        ref = take.get("url") or take.get("id")
+        if not isinstance(ref, str) or not ref:
+            return
+        self._spawn(self._read_back(ref, take, turn_id=turn_id, call_id=call_id), name="live")
+
+    async def _read_back(
+        self, ref: str, take: dict[str, Any], *, turn_id: str, call_id: str
+    ) -> None:
+        tool = next((t for t in self.connection.tools if t.name == "read_thread"), None)
+        if tool is None:
+            return
+        args = {"take": ref, "limit": 3}
+        try:
+            result = await self.connection.call_tool(tool.name, args, origin="verify")
+        except Exception as exc:
+            log.info("read_back_failed", error=str(exc)[:200])
+            return
+        uri = view_uri(tool)
+        if result.isError or uri is None:
+            return
+        link = take.get("url") if isinstance(take.get("url"), str) else None
+        await self.send_view(
+            uri,
+            turn_id=turn_id,
+            call_id=f"{call_id}-live",
+            tool=tool,
+            args=args,
+            result=result,
+            label="Live on fanmoot.com",
+            link=link,
+        )
 
     async def _drop_adk_session(self) -> None:
         if self._adk_session is not None:
@@ -646,6 +751,7 @@ class VisitorSession:
         except McpUnavailable as exc:
             log.warning("mcp_connect_failed", error=str(exc)[:200])
         self.send_facts()
+        await self.send_scenarios()
         if self.connection.connected and self.oauth.discovered is None:
             # Discovery ahead of any sign-in, so the header strip's OAuth fact
             # is the server's own word (W3-4). Cached per process, so only the
@@ -666,7 +772,11 @@ class VisitorSession:
         # …and the ticker's state, now rather than at its next look.
         self._ambient_sent = None
         self._ambient_wake.set()
-        return self.outbox.attach()
+        queue = self.outbox.attach()
+        # …and the scenario chips, which a reloaded page no longer has.
+        if self._scenarios_frame is not None:
+            self.send(self._scenarios_frame)
+        return queue
 
     def detach(self, queue: asyncio.Queue[dict[str, Any]] | None = None) -> None:
         if self.outbox.detach(queue):
@@ -681,6 +791,7 @@ class VisitorSession:
             self._connect_task.cancel()
         for task in list(self._view_tasks):
             task.cancel()
+        await self._cancel_guide_tasks()
         if self._ambient_task is not None and not self._ambient_task.done():
             self._ambient_task.cancel()
             with contextlib.suppress(BaseException):
@@ -712,6 +823,8 @@ class SessionRegistry:
         self.llm_factory = llm_factory
         self.sessions: dict[str, VisitorSession] = {}
         self._sweeper: asyncio.Task[None] | None = None
+        #: One reading of what is on, for every visitor (W4).
+        self.guide = GuideBoard(settings)
 
     def create(self) -> VisitorSession | None:
         if len(self.sessions) >= self.settings.max_sessions:
@@ -722,6 +835,7 @@ class SessionRegistry:
             demo_fan=self.demo_fan,
             connection_factory=self.connection_factory,
             llm_factory=self.llm_factory,
+            guide=self.guide,
         )
         self.sessions[session.id] = session
         return session

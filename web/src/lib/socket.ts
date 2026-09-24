@@ -26,6 +26,7 @@
  */
 import { useCallback, useEffect, useReducer, useRef } from 'react'
 
+import { WIRE_VERSION } from '@/lib/protocol'
 import type {
   AuthState,
   ClientFrame,
@@ -35,6 +36,7 @@ import type {
   SessionState,
   Ambient,
   CallToolResult,
+  Scenario,
   TraceFrame,
   TurnEnd,
 } from '@/lib/protocol'
@@ -82,6 +84,8 @@ type State = {
   /** Every card this conversation has shown, oldest first, the last few kept. */
   cards: ViewPayload[]
   ambient: Ambient | null
+  /** The guided scenarios (W4), and whether they were written from live data. */
+  scenarios: { live: boolean; list: Scenario[] } | null
   authRequired: AuthRequired | null
   error: { code: string; message: string } | null
 }
@@ -100,6 +104,7 @@ const INITIAL: State = {
   lastView: null,
   cards: [],
   ambient: null,
+  scenarios: null,
   authRequired: null,
   error: null,
 }
@@ -131,7 +136,15 @@ function reduce(state: State, action: Action): State {
   const frame = action.frame
   switch (frame.type) {
     case 'hello':
-      return { ...state, hello: frame }
+      // A tab left open across a deploy speaks an older protocol than the
+      // server it reconnects to. Say so, rather than half-work.
+      return frame.wire === WIRE_VERSION
+        ? { ...state, hello: frame }
+        : {
+            ...state,
+            hello: frame,
+            error: { code: 'stale_page', message: 'The demo has been updated. Reload the page to carry on.' },
+          }
     case 'session':
       // The conversation on screen is kept: a reconnecting socket sees the
       // fresh session's frame first and the resumed one a moment later.
@@ -140,7 +153,7 @@ function reduce(state: State, action: Action): State {
     case 'session.ticket':
       return state.session ? { ...state, session: { ...state.session, sign_in_url: frame.sign_in_url } } : state
     case 'session.reset':
-      return { ...state, turns: [], lastView: null, cards: [], authRequired: null }
+      return { ...state, turns: [], lastView: null, cards: [], authRequired: null, error: null }
     case 'facts':
       return { ...state, facts: frame, auth: frame.auth }
     case 'auth': {
@@ -183,6 +196,8 @@ function reduce(state: State, action: Action): State {
       return { ...state, lastView: frame, cards: [...state.cards.slice(-(CARD_LIMIT - 1)), frame] }
     case 'ambient':
       return { ...state, ambient: frame }
+    case 'scenarios':
+      return { ...state, scenarios: { live: frame.live_data, list: frame.scenarios } }
     case 'view.call.result':
       // Settled in the socket handler, where the promise that waits for it lives.
       return state
@@ -214,6 +229,10 @@ function reduce(state: State, action: Action): State {
       }
       return { ...state, error: frame }
     case 'pong':
+      return state
+    default:
+      // A frame this build does not know — a newer server. Ignored, never
+      // fatal: a reducer that returned nothing here blanked the whole page.
       return state
   }
 }
@@ -364,10 +383,14 @@ export function useDemoSession() {
         }),
       [],
     ),
-    /** Must be called inside the click that asked for it, or the popup is blocked. */
-    signIn: useCallback(() => {
+    /**
+     * Must be called inside the click that asked for it, or the popup is
+     * blocked. `signup` opens Fanmoot's sign-up form first (W4-5).
+     */
+    signIn: useCallback((options?: { signup?: boolean }) => {
       if (signInUrl.current) {
-        window.open(signInUrl.current, 'fanmoot-sign-in', 'popup,width=480,height=760')
+        const url = options?.signup ? `${signInUrl.current}&signup=1` : signInUrl.current
+        window.open(url, 'fanmoot-sign-in', 'popup,width=480,height=760')
       }
     }, []),
   }

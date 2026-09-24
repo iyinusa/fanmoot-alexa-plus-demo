@@ -116,3 +116,17 @@ export const AlertIcon = (p: Props) => (
     <path d="M12 8v5M12 16.5v.01M10.3 3.9L2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
   </Svg>
 )
+
+/** Start over (W4-7): an arrow coming round to where it began. */
+export const ResetIcon = (p: Props) => (
+  <Svg {...p}>
+    <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1" />
+    <path d="M3.5 4.5v4.8h4.8" />
+  </Svg>
+)
+
+export const ArrowIcon = (p: Props) => (
+  <Svg {...p}>
+    <path d="M5 12h14M13 6l6 6-6 6" />
+  </Svg>
+)

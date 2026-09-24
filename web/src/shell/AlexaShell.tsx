@@ -13,13 +13,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Captions } from '@/conversation/Captions'
 import { Composer } from '@/conversation/Composer'
+import { Guide } from '@/conversation/Guide'
 import { Turns } from '@/conversation/Turns'
+import { useGuide } from '@/lib/guide'
 import { useDemoSession } from '@/lib/socket'
 import { completeSentences, useListener, useSpeaker } from '@/lib/speech'
 import { useTheme } from '@/lib/theme'
 import { Device } from '@/shell/Device'
 import { Home } from '@/shell/Home'
-import { AlertIcon, CloseIcon } from '@/shell/Icons'
+import { AlertIcon, CloseIcon, ResetIcon } from '@/shell/Icons'
 import { LinkPrompt } from '@/shell/LinkPrompt'
 import { StatusBar } from '@/shell/StatusBar'
 import { type VoiceMode, Waveform } from '@/shell/Waveform'
@@ -50,6 +52,15 @@ export function AlexaShell() {
     [demo.ask, speaker.stop],
   )
   const listener = useListener(ask)
+  const scenarios = demo.scenarios?.list ?? []
+  const guide = useGuide({
+    scenarios,
+    turns: demo.turns,
+    auth: demo.auth,
+    error: demo.error,
+    ask,
+    signOut: demo.signOut,
+  })
 
   const toggleListening = useCallback(() => {
     if (micMuted) return
@@ -122,10 +133,21 @@ export function AlexaShell() {
     [running, ask],
   )
 
+  // ── Start over (W4-7) ─────────────────────────────────────────────────────
+  // One tap from anywhere, and judges will press it at the worst moment. The
+  // server stops the turn and anything still due to land on the screen before
+  // it says `session.reset`; this side silences Alexa, closes the mic, and
+  // drops the tour, the notices and any full-screen card. The sign-in is kept,
+  // and said so, so nobody wonders whether starting over signed them out.
   const reset = () => {
     speaker.stop()
+    listener.stop()
+    speaker.clearCaption()
     setExpanded(false)
+    guide.leave()
     demo.reset()
+    const who = demo.auth?.mode === 'none' ? null : demo.auth?.handle
+    setNotice({ text: who ? `Started over. Still signed in as @${who}.` : 'Started over.', tone: 'info' })
   }
 
   const hasTurns = demo.turns.length > 0
@@ -150,11 +172,20 @@ export function AlexaShell() {
           </h1>
           <p className="truncate text-xs text-muted">Where fans debate football — now by voice.</p>
         </div>
-        {!panel.wide && (
-          <span className="ml-auto">
+        <span className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={reset}
+            title="Start over: a fresh conversation, the sign-in kept"
+            className="inline-flex h-9 items-center gap-1.5 rounded-full border border-line px-3 text-xs text-muted transition-colors hover:border-[var(--fm-accent)] hover:text-ink"
+          >
+            <ResetIcon size={15} />
+            <span className="max-sm:sr-only">Start over</span>
+          </button>
+          {!panel.wide && (
             <TraceButton count={demo.trace.length} connected={trace.connected} onClick={() => panel.setSheet(true)} />
-          </span>
-        )}
+          )}
+        </span>
       </header>
       <div
         className={`mx-auto grid w-full max-w-[1480px] gap-5 xl:items-start ${
@@ -210,7 +241,11 @@ export function AlexaShell() {
                       exit={{ opacity: 0, scale: 0.98 }}
                       transition={{ duration: 0.35, ease: EASE }}
                     >
-                      <Home ambient={demo.ambient} canListen={listener.supported} />
+                      <Home
+                        ambient={demo.ambient}
+                        canListen={listener.supported}
+                        lines={scenarios.map((scenario) => scenario.steps[0] ?? '').filter(Boolean)}
+                      />
                     </motion.div>
                   ) : (
                     <motion.div
@@ -289,6 +324,7 @@ export function AlexaShell() {
                       signIn={demo.signIn}
                       useDemo={demo.useDemoAccount}
                       dismiss={demo.dismiss}
+                      signup={guide.tour?.scenario.signup ?? false}
                     />
                   )}
                 </AnimatePresence>
@@ -311,8 +347,18 @@ export function AlexaShell() {
               voiceOn={!speaker.muted}
               canSpeak={speaker.supported}
               setVoiceOn={(on) => speaker.setMuted(!on)}
-              showSuggestions={!running}
-            />
+            >
+              <Guide
+                scenarios={scenarios}
+                live={demo.scenarios?.live ?? false}
+                tour={guide.tour}
+                running={running}
+                start={guide.start}
+                next={guide.next}
+                leave={guide.leave}
+                signIn={demo.signIn}
+              />
+            </Composer>
           </div>
 
           <p className="mx-auto max-w-3xl px-2 text-center text-xs leading-relaxed text-faint">

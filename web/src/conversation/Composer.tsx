@@ -3,20 +3,13 @@
  * it for every browser without speech recognition and every room where
  * talking out loud is not an option. Both end in the same `turn` frame.
  *
- * Under them, "Try saying…" — the example phrases `fanmoot-mcp`'s
- * `alexa/addon.json` carries (S8-1). Each one drives a real turn.
+ * Under them, the guided scenarios (W4, `conversation/Guide.tsx`), passed in
+ * as `children` so the composer does not need to know how a tour runs.
  */
 import { motion } from 'framer-motion'
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, type ReactNode, useState } from 'react'
 
 import { CaptionsIcon, MicIcon, MicOffIcon, SendIcon, SpeakerIcon, SpeakerOffIcon, StopIcon } from '@/shell/Icons'
-
-export const SUGGESTIONS = [
-  "What's happening with Arsenal today?",
-  'What are fans saying about the derby?',
-  'I want to tell them Saka was offside',
-  'Predict Arsenal two, Chelsea one',
-]
 
 type Props = {
   running: boolean
@@ -32,7 +25,7 @@ type Props = {
   voiceOn: boolean
   canSpeak: boolean
   setVoiceOn: (on: boolean) => void
-  showSuggestions: boolean
+  children?: ReactNode
 }
 
 export function Composer(props: Props) {
@@ -146,24 +139,7 @@ export function Composer(props: Props) {
         </div>
       </form>
 
-      {props.showSuggestions && (
-        // One row that scrolls sideways on a phone, so the suggestions never
-        // cost the screen its height (W2-8).
-        <div className="-mx-4 flex items-center gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] md:mx-0 md:flex-wrap md:overflow-visible md:px-0 md:pb-0">
-          <span className="shrink-0 text-xs text-faint">Try saying</span>
-          {SUGGESTIONS.map((suggestion) => (
-            <button
-              key={suggestion}
-              type="button"
-              disabled={running}
-              onClick={() => props.ask(suggestion)}
-              className="shrink-0 rounded-full border border-line bg-surface/60 px-3 py-1.5 text-xs text-muted transition-colors hover:border-[var(--fm-accent)] hover:text-ink disabled:opacity-50"
-            >
-              “{suggestion}”
-            </button>
-          ))}
-        </div>
-      )}
+      {props.children}
     </div>
   )
 }

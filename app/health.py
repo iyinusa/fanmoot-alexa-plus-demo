@@ -72,6 +72,5 @@ async def healthz() -> dict[str, Any]:
             {"model": rung.qualified, "ready": models.unconfigured_reason(rung, settings) is None}
             for rung in models.current_chain(settings)
         ],
-        "demo_fan": settings.demo_fan_configured,
         "checks": checks,
     }

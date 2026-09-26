@@ -14,17 +14,23 @@ sign-in intact. After the grace period the session is closed, its MCP session
 ended and a visitor's own grant revoked, so nothing is left linked on the
 server by a tab nobody will reopen.
 
-**Identity changes reconnect.** Signing in, switching to the demo fan and
-signing out each open a fresh MCP session, so the ``initialize`` on the trace
+**Identity changes reconnect.** Signing in and signing out each open a fresh
+MCP session, so the ``initialize`` on the trace
 is always the one this identity is using.
+
+**Alexa's voice and ears** (``app.voice``) are the process's, shared by every
+session, and each session keeps its own allowance of both: characters Polly
+may speak for it, and seconds of the fan's voice Transcribe may hear. The
+session frame says whether each is on, so the browser knows whether to use
+them or its own Web Speech API.
 
 **Two callers besides the agent (W2).** A card on screen may call a tool
 through the host bridge — the thread view's reply composer — and the corner
 ticker asks ``live_scores`` on its own schedule. Both go over this same MCP
 session and this same grant, both are on the trace, tagged with who asked,
 and neither is a way round the rules a turn obeys: a card's call must be one
-the server marked callable by an app, and a write from a card spends the demo
-account's allowance exactly as the agent's would.
+the server marked callable by an app, and a write from a card needs the fan's
+own grant exactly as the agent's would.
 """
 
 from __future__ import annotations
@@ -42,7 +48,6 @@ from mcp import types
 from mcp.shared.exceptions import McpError
 
 from app.agent import models
-from app.agent.demo_fan import DemoFan, DemoFanUnavailable
 from app.agent.mcp_client import AuthChallenge, McpConnection, McpUnavailable
 from app.agent.oauth import (
     PKCE_METHOD,
@@ -51,12 +56,13 @@ from app.agent.oauth import (
     OAuthError,
     PendingAuthorization,
 )
-from app.agent.runtime import APP_NAME, SESSIONS, Turn, app_visible, is_write, view_uri
+from app.agent.runtime import APP_NAME, SESSIONS, Turn, app_visible, view_uri
 from app.agent.trace import Tracer
 from app.agent.usage import TurnGate
 from app.guided import GuideBoard
 from app.logging_config import get_logger
 from app.settings import Settings
+from app.voice import Ears, Listening, Speaker, VoiceUnavailable
 
 log = get_logger("session")
 
@@ -148,16 +154,18 @@ class VisitorSession:
         settings: Settings,
         *,
         oauth: DemoOAuthClient,
-        demo_fan: DemoFan,
         connection_factory: Any = McpConnection,
         llm_factory: models.LlmFactory = models.build_llm,
         guide: GuideBoard | None = None,
+        speaker: Speaker | None = None,
+        ears: Ears | None = None,
     ) -> None:
         self.settings = settings
         self.oauth = oauth
-        self.demo_fan = demo_fan
         self.llm_factory = llm_factory
         self.guide = guide or GuideBoard(settings)
+        self.speaker = speaker or Speaker(settings)
+        self.ears = ears or Ears(settings)
 
         self.id = secrets.token_urlsafe(12)
         self.resume_token = secrets.token_urlsafe(24)
@@ -174,14 +182,18 @@ class VisitorSession:
             timeout_s=settings.mcp_timeout_s,
         )
 
-        # Who the fan is: "none", "demo" (the shared account) or "linked".
+        # Who the fan is: "none", or "linked" to their own Fanmoot account.
         self.auth_mode = "none"
         self.holder: GrantHolder | None = None
         self.handle: str | None = None
         self.pending: dict[str, PendingAuthorization] = {}
 
         self.turns = 0
-        self.demo_writes = 0
+        # Alexa's voice and ears, spent (app.voice).
+        self.voice_chars = 0
+        self.listen_seconds = 0.0
+        self.listening: Listening | None = None
+        self._voice_tasks: set[asyncio.Task[None]] = set()
         self.turn_task: asyncio.Task[Any] | None = None
         self._adk_session: str | None = None
         self._views_sent: set[str] = set()
@@ -209,10 +221,6 @@ class VisitorSession:
     def scopes(self) -> list[str]:
         return self.holder.scopes if self.holder else []
 
-    @property
-    def demo_label(self) -> str | None:
-        return self.demo_fan.label if self.auth_mode == "demo" else None
-
     async def _token(self) -> str | None:
         if self.holder is None:
             return None
@@ -229,7 +237,6 @@ class VisitorSession:
             "mode": self.auth_mode,
             "handle": self.handle,
             "scopes": self.scopes,
-            "label": self.demo_label,
             # What the grant was obtained with, read from the grant rather
             # than asserted: only a session holding one says OAuth at all.
             "method": f"OAuth 2.1 + PKCE {PKCE_METHOD}" if self.holder else None,
@@ -250,7 +257,6 @@ class VisitorSession:
                 "status": challenge.status,
                 "scope": challenge.scope,
                 "sign_in_url": self.sign_in_url,
-                "demo_available": self.demo_fan.configured and self.auth_mode != "demo",
             }
         )
 
@@ -281,19 +287,10 @@ class VisitorSession:
             await previous.revoke(self.tracer)
         await self._switched("signed in to Fanmoot")
 
-    async def use_demo(self) -> None:
-        holder = await self.demo_fan.holder(self.tracer)
-        previous, previous_mode = self.holder, self.auth_mode
-        self.holder, self.auth_mode, self.handle = holder, "demo", self.demo_fan.handle
-        if previous is not None and previous_mode == "linked":
-            await previous.revoke(self.tracer)
-        await self._switched("switched to the demo fan")
-
     async def sign_out(self) -> None:
         previous, previous_mode = self.holder, self.auth_mode
         self.holder, self.auth_mode, self.handle = None, "none", None
         if previous is not None and previous_mode == "linked":
-            # The demo account's grant is shared; only a visitor's own is revoked.
             await previous.revoke(self.tracer)
         await self._switched("signed out")
 
@@ -305,8 +302,6 @@ class VisitorSession:
             return
         if self.holder is not None and self.handle is None:
             self.handle = await self._whoami()
-            if self.auth_mode == "demo":
-                self.demo_fan.handle = self.handle
         self.send_auth(reason=reason)
 
     async def _whoami(self) -> str | None:
@@ -319,26 +314,59 @@ class VisitorSession:
         handle = data.get("handle")
         return str(handle) if handle else None
 
-    # ── Demo-account rationing (W1-8) ────────────────────────────────────────
-    def demo_write_refusal(self, tool: types.Tool) -> str | None:
-        if self.auth_mode != "demo":
-            return None
-        if self.demo_writes >= self.settings.demo_fan_writes_per_session:
-            return (
-                "The demo account has done all it can in this session. Sign in as yourself to "
-                "keep going."
-            )
-        if self.demo_fan.budget.remaining() <= 0:
-            return (
-                "The demo account has reached its limit for the hour. Sign in as yourself to keep "
-                "going."
-            )
-        return None
+    # ── Alexa's voice (app.voice) ────────────────────────────────────────────
+    async def speak(self, text: str) -> bytes:
+        """One sentence of Alexa's, as MP3 from Polly, against this session's allowance."""
+        text = " ".join(text.split())
+        if self.voice_chars + len(text) > self.settings.voice_chars_per_session:
+            raise VoiceUnavailable("voice_cap", "This session has said all it can out loud.")
+        audio = await self.speaker.speak(text)
+        self.voice_chars += len(text)
+        return audio
 
-    def spent_write(self, tool: types.Tool) -> None:
-        if self.auth_mode == "demo":
-            self.demo_writes += 1
-            self.demo_fan.budget.spend()
+    # ── Alexa's ears (app.voice.listen) ──────────────────────────────────────
+    async def start_listening(self, listen_id: int, rate: int) -> None:
+        """The mic opened: start relaying this utterance to Transcribe."""
+        self.touch()
+        await self.cancel_listening()
+
+        def refuse(code: str, message: str) -> None:
+            self.send({"type": "listen.error", "id": listen_id, "code": code, "message": message})
+
+        if self.listen_seconds >= self.settings.listen_seconds_per_session:
+            refuse("listen_cap", "I've listened all I can in this visit. Type instead.")
+            return
+        try:
+            listening = self.ears.open(listen_id=listen_id, rate=rate, send=self.send)
+        except VoiceUnavailable as exc:
+            refuse(exc.code, exc.message)
+            return
+        self.listening = listening
+        listening.task.add_done_callback(lambda _: self._listened(listening))
+
+    def _listened(self, listening: Listening) -> None:
+        self.listen_seconds += listening.seconds
+        if self.listening is listening:
+            self.listening = None
+
+    def listen_audio(self, chunk: bytes) -> None:
+        if self.listening is not None:
+            self.listening.feed(chunk)
+
+    def finish_listening(self, listen_id: int) -> None:
+        """The fan stopped talking. The last words arrive as ``listen.final``,
+        from a task, so the socket keeps reading while Transcribe finishes."""
+        listening = self.listening
+        if listening is None or listening.id != listen_id:
+            return
+        task = asyncio.create_task(listening.finish(), name=f"listen-finish-{self.id}")
+        self._voice_tasks.add(task)
+        task.add_done_callback(self._voice_tasks.discard)
+
+    async def cancel_listening(self) -> None:
+        listening, self.listening = self.listening, None
+        if listening is not None:
+            await listening.cancel()
 
     # ── Views (HAD-8) ────────────────────────────────────────────────────────
     async def send_view(
@@ -424,12 +452,6 @@ class VisitorSession:
             # the model is not a card's to call.
             raise ViewCallRefused(-32602, f"{name} is not callable from a card.")
 
-        write = is_write(tool)
-        if write:
-            refusal = self.demo_write_refusal(tool)
-            if refusal is not None:
-                return _refused(refusal)
-
         self.view_calls += 1
         try:
             result = await self.connection.call_tool(name, arguments, origin="view")
@@ -445,8 +467,6 @@ class VisitorSession:
         except McpError as exc:
             raise ViewCallRefused(exc.error.code, exc.error.message) from exc
 
-        if write and not result.isError:
-            self.spent_write(tool)
         return result.model_dump(by_alias=True, mode="json", exclude_none=True)
 
     def start_view_call(self, call_id: str | int, name: str, arguments: dict[str, Any]) -> None:
@@ -707,9 +727,19 @@ class VisitorSession:
             "resumed": resumed,
             "sign_in_url": self.sign_in_url,
             "auth": self.auth_state(),
-            "demo_fan": {"available": self.demo_fan.configured, "label": self.demo_fan.label},
+            "voice": self.voice_state(),
             "turns_left": self.turns_left,
             "busy": self.busy,
+        }
+
+    def voice_state(self) -> dict[str, Any]:
+        """Whether the browser should speak with Polly and listen with Transcribe."""
+        settings = self.settings
+        return {
+            **self.speaker.describe(),
+            "speak": self.speaker.ready and self.voice_chars < settings.voice_chars_per_session,
+            "listen": self.ears.ready and self.listen_seconds < settings.listen_seconds_per_session,
+            "language": settings.voice_language,
         }
 
     def send_facts(self) -> None:
@@ -792,6 +822,7 @@ class VisitorSession:
             self._connect_task.cancel()
         for task in list(self._view_tasks):
             task.cancel()
+        await self.cancel_listening()
         await self._cancel_guide_tasks()
         if self._ambient_task is not None and not self._ambient_task.done():
             self._ambient_task.cancel()
@@ -813,13 +844,16 @@ class SessionRegistry:
         settings: Settings,
         *,
         oauth: DemoOAuthClient,
-        demo_fan: DemoFan,
         connection_factory: Any = McpConnection,
         llm_factory: models.LlmFactory = models.build_llm,
+        speaker: Speaker | None = None,
+        ears: Ears | None = None,
     ) -> None:
         self.settings = settings
         self.oauth = oauth
-        self.demo_fan = demo_fan
+        #: Alexa's voice and ears, one of each for every visitor (app.voice).
+        self.speaker = speaker or Speaker(settings)
+        self.ears = ears or Ears(settings)
         self.connection_factory = connection_factory
         self.llm_factory = llm_factory
         self.sessions: dict[str, VisitorSession] = {}
@@ -837,10 +871,11 @@ class SessionRegistry:
         session = VisitorSession(
             self.settings,
             oauth=self.oauth,
-            demo_fan=self.demo_fan,
             connection_factory=self.connection_factory,
             llm_factory=self.llm_factory,
             guide=self.guide,
+            speaker=self.speaker,
+            ears=self.ears,
         )
         self.sessions[session.id] = session
         return session
@@ -948,7 +983,6 @@ def _ticker_matches(value: Any) -> list[dict[str, Any]]:
 
 
 __all__ = [
-    "DemoFanUnavailable",
     "Outbox",
     "SessionRegistry",
     "ViewCallRefused",

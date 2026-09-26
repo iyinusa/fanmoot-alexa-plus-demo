@@ -59,12 +59,14 @@ services:
       FMD_OAUTH_CLIENT_ID: ${FMD_OAUTH_CLIENT_ID:-}
       FMD_OAUTH_CLIENT_SECRET: ${FMD_OAUTH_CLIENT_SECRET:-}
 
-      # ── The demo fan (W1-8) ─────────────────────────────────────────────
-      FMD_DEMO_FAN_EMAIL: ${FMD_DEMO_FAN_EMAIL:-}
-      FMD_DEMO_FAN_PASSWORD: ${FMD_DEMO_FAN_PASSWORD:-}
-      FMD_DEMO_FAN_LABEL: ${FMD_DEMO_FAN_LABEL:-Demo fan account}
-      FMD_DEMO_FAN_WRITES_PER_SESSION: ${FMD_DEMO_FAN_WRITES_PER_SESSION:-5}
-      FMD_DEMO_FAN_WRITES_PER_HOUR: ${FMD_DEMO_FAN_WRITES_PER_HOUR:-30}
+      # ── Alexa's voice and ears: Amazon Polly and Amazon Transcribe ─────
+      FMD_VOICE_ENABLED: ${FMD_VOICE_ENABLED:-true}
+      FMD_VOICE_ID: ${FMD_VOICE_ID:-Amy}
+      FMD_VOICE_ENGINE: ${FMD_VOICE_ENGINE:-generative}
+      FMD_VOICE_LANGUAGE: ${FMD_VOICE_LANGUAGE:-en-GB}
+      FMD_VOICE_CHARS_PER_SESSION: ${FMD_VOICE_CHARS_PER_SESSION:-15000}
+      FMD_LISTEN_SECONDS_PER_SESSION: ${FMD_LISTEN_SECONDS_PER_SESSION:-600}
+      FMD_LISTEN_MAX_UTTERANCE_S: ${FMD_LISTEN_MAX_UTTERANCE_S:-30}
 
       # ── Operator ────────────────────────────────────────────────────────
       FMD_ADMIN_TOKEN: ${FMD_ADMIN_TOKEN:-}

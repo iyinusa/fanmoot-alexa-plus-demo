@@ -4,9 +4,10 @@
  * the scope). "Sign in to Fanmoot" opens the real `mcp.fanmoot.com/authorize`
  * in a popup (W1-7); nothing about the flow is simulated.
  *
- * In the "New here" scenario (W4-5) it leads with creating an account: the
- * popup opens on Fanmoot's own sign-up form (`prompt=create`), and the shared
- * demo account is not offered, because the point is a fan of their own.
+ * Both ways in are always offered, because there is no shared account to
+ * fall back on: a fan posts as themselves. The "New here" scenario (W4-5)
+ * leads with creating one — the popup opens on Fanmoot's own sign-up form
+ * (`prompt=create`) — and everywhere else signing in leads.
  *
  * Keyboard (W5-5): the card takes focus when it appears, on its main button,
  * because a keyboard or screen-reader user would otherwise not know it had.
@@ -23,14 +24,12 @@ export function LinkPrompt({
   required,
   auth,
   signIn,
-  useDemo,
   dismiss,
   signup = false,
 }: {
   required: AuthRequired
   auth: AuthState | null
   signIn: (options?: { signup?: boolean }) => void
-  useDemo: () => void
   dismiss: () => void
   signup?: boolean
 }) {
@@ -83,7 +82,7 @@ export function LinkPrompt({
           ? `This sign-in did not grant ${required.scope ?? 'that permission'}. Sign in again and allow it.`
           : joining
             ? 'Create your account on Fanmoot’s own page, confirm your email, and your first take goes out under your new handle. Alexa never sees your password.'
-            : 'Posts and predictions go out under your own handle. You sign in on Fanmoot’s own page — Alexa never sees your password.'}
+            : 'Posts and predictions go out under your own handle. Sign in, or join free in a minute, on Fanmoot’s own page — Alexa never sees your password.'}
       </p>
       <div className="mt-4 flex flex-wrap gap-2">
         <button
@@ -99,9 +98,13 @@ export function LinkPrompt({
             I already have one
           </button>
         )}
-        {required.demo_available && !scoped && !joining && (
-          <button type="button" onClick={useDemo} className="fm-tap rounded-fm-sm border border-line px-4 text-ink hover:bg-surface">
-            Use the demo account
+        {!scoped && !joining && (
+          <button
+            type="button"
+            onClick={() => signIn({ signup: true })}
+            className="fm-tap rounded-fm-sm border border-line px-4 text-ink hover:bg-surface"
+          >
+            Create an account
           </button>
         )}
       </div>

@@ -42,7 +42,6 @@ def test_ok_when_the_server_answers_and_the_bundle_is_built(
     assert probe.seen == ["https://mcp.fanmoot.test/healthz"]
     # Which models a turn would try, by name, and never a credential.
     assert body["model_chain"] == [{"model": "scripted/primary", "ready": True}]
-    assert body["demo_fan"] is False
 
 
 def test_degraded_but_still_200_when_the_server_is_unreachable(

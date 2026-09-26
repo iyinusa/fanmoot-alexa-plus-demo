@@ -1,5 +1,7 @@
 /**
- * The `/ws` wire protocol, version 5 (W1-5, W2, W3, W4). Mirrors app/ws.py,
+ * The `/ws` wire protocol, version 6 (W1-5, W2, W3, W4, and Alexa's voice).
+ * Besides these JSON frames, the fan's voice goes up as binary frames of
+ * 16-bit PCM between `listen.start` and `listen.stop` (app/voice/listen.py). Mirrors app/ws.py,
  * app/session.py and app/agent/runtime.py — a frame changed there is changed
  * here, and WIRE_VERSION goes up.
  *
@@ -7,7 +9,7 @@
  * knows about a turn, it learns from these frames.
  */
 
-export const WIRE_VERSION = 5
+export const WIRE_VERSION = 6
 
 // ── Browser → server ─────────────────────────────────────────────────────────
 export type ClientFrame =
@@ -16,20 +18,22 @@ export type ClientFrame =
   | { type: 'turn'; text: string }
   | { type: 'cancel' }
   | { type: 'reset' }
-  | { type: 'auth.demo' }
   | { type: 'auth.sign_out' }
+  /** The mic is open: the binary frames that follow are the fan's voice. */
+  | { type: 'listen.start'; id: number; rate: number }
+  /** The fan has stopped: the last words come back as `listen.final`. */
+  | { type: 'listen.stop'; id: number }
+  | { type: 'listen.cancel'; id: number }
   /** A card's `tools/call` through the host bridge (W2-6). */
   | { type: 'view.call'; id: number; name: string; arguments: Record<string, unknown> }
 
 // ── Server → browser ─────────────────────────────────────────────────────────
-export type AuthMode = 'none' | 'demo' | 'linked'
+export type AuthMode = 'none' | 'linked'
 
 export type AuthState = {
   mode: AuthMode
   handle: string | null
   scopes: string[]
-  /** The demo account's label, when that is who the fan is. */
-  label: string | null
   /** "OAuth 2.1 + PKCE S256" — only when a grant is actually held. */
   method: string | null
   client_mode: 'static' | 'metadata_document' | 'dcr' | null
@@ -45,6 +49,25 @@ export type Hello = {
   mcp_url: string
 }
 
+/**
+ * Whether Alexa speaks with Amazon Polly and listens with Amazon Transcribe
+ * (app/voice). Either off, and the browser uses its own Web Speech API.
+ */
+export type VoiceState = {
+  speak: boolean
+  listen: boolean
+  /** The Polly voice, and its engine (`generative`, or `neural` behind it). */
+  voice: string
+  engine: string
+  language: string
+}
+
+/** What Transcribe heard, answering the `listen.start` with the same `id`. */
+export type ListenFrame =
+  | { type: 'listen.partial'; id: number; text: string }
+  | { type: 'listen.final'; id: number; text: string }
+  | { type: 'listen.error'; id: number; code: string; message: string }
+
 export type SessionState = {
   type: 'session'
   session_id: string
@@ -52,7 +75,7 @@ export type SessionState = {
   resumed: boolean
   sign_in_url: string
   auth: AuthState
-  demo_fan: { available: boolean; label: string }
+  voice: VoiceState
   turns_left: number
   busy: boolean
 }
@@ -218,9 +241,9 @@ export type ServerFrame =
       status: number
       scope: string | null
       sign_in_url: string
-      demo_available: boolean
     }
   | { type: 'session.ticket'; sign_in_url: string }
+  | ListenFrame
   | { type: 'session.reset' }
   | { type: 'turn.start'; turn_id: string; text: string }
   | { type: 'text.delta'; turn_id: string; text: string }

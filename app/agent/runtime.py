@@ -176,7 +176,6 @@ class Turn:
                 identity_line(
                     session.auth_mode,
                     handle=session.handle,
-                    label=session.demo_label,
                     scopes=session.scopes,
                 ),
             )
@@ -337,11 +336,6 @@ class Turn:
                 }
             )
 
-        refusal = session.demo_write_refusal(tool) if is_write(tool) else None
-        if refusal is not None:
-            finished(False, refusal, reason="demo_limit")
-            return {"error": "demo_limit", "say": refusal}
-
         try:
             result = await self._call_with_one_reconnect(tool, args)
         except AuthChallenge as challenge:
@@ -369,7 +363,6 @@ class Turn:
             return {"error": "tool_error", "say": say}
 
         if is_write(tool):
-            session.spent_write(tool)
             structured = result.structuredContent or {}
             take = structured.get("take")
             # A held take is not live, and must not be shown as if it were

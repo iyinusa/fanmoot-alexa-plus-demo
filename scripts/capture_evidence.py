@@ -35,7 +35,6 @@ from typing import Any
 
 from app import __version__
 from app.agent import models
-from app.agent.demo_fan import DemoFan
 from app.agent.oauth import DemoOAuthClient
 from app.agent.scenario import MATCHDAY
 from app.logging_config import configure_logging
@@ -62,9 +61,7 @@ async def capture(
         return _fail(f"no Bedrock rung can run: {reasons[0]}.")
 
     oauth = DemoOAuthClient(settings)
-    session = VisitorSession(
-        settings, oauth=oauth, demo_fan=DemoFan(settings, oauth), llm_factory=llm_factory
-    )
+    session = VisitorSession(settings, oauth=oauth, llm_factory=llm_factory)
     queue = session.outbox.attach()
     frames: list[dict[str, Any]] = []
     ends: list[dict[str, Any]] = []

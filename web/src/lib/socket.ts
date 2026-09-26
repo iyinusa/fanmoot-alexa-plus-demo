@@ -24,6 +24,12 @@
  *   posting over the visitor's own MCP session (W2-6).
  * - **The ticker.** `ambient` is what the corner of the screen shows (W2-7).
  *
+ * Alexa's voice and ears (app/voice) add two more: `ears` sends the fan's
+ * voice up the socket as binary frames and hands what Transcribe heard to
+ * whoever is listening, outside the reducer — words arrive several times a
+ * second and only the listener needs them — and `speech()` fetches one
+ * sentence of Alexa's from Polly, as this session.
+ *
  * W5-4 adds what the device needs to stay in character when things go wrong:
  * when the next reconnect is due (`retryAt`) and a way to try at once
  * (`reconnect()`); the error `code` on a failed turn, so Alexa can apologise
@@ -31,7 +37,7 @@
  * pass as a notice; and `ask()` saying whether it was sent, so a question
  * typed while the socket is down stays in the box instead of vanishing.
  */
-import { useCallback, useEffect, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
 
 import { type FaultKind, SCREEN_CODES } from '@/lib/faults'
 import { WIRE_VERSION } from '@/lib/protocol'
@@ -40,6 +46,7 @@ import type {
   ClientFrame,
   Facts,
   Hello,
+  ListenFrame,
   ServerFrame,
   SessionState,
   Ambient,
@@ -229,7 +236,10 @@ function reduce(state: State, action: Action): State {
     case 'scenarios':
       return { ...state, scenarios: { live: frame.live_data, list: frame.scenarios } }
     case 'view.call.result':
-      // Settled in the socket handler, where the promise that waits for it lives.
+    case 'listen.partial':
+    case 'listen.final':
+    case 'listen.error':
+      // Handled in the socket handler: a waiting promise, or the listener.
       return state
     case 'turn.end':
       return {
@@ -308,6 +318,9 @@ export function useDemoSession() {
   const viewCalls = useRef(new Map<number, { resolve: (r: CallToolResult) => void; reject: (e: Error) => void; timer: number }>())
   const nextViewCall = useRef(1)
   const connectNow = useRef<() => void>(() => {})
+  const listeners = useRef(new Set<(frame: ListenFrame) => void>())
+  const current = useRef<{ session_id: string; resume_token: string } | null>(null)
+  current.current = state.session
 
   useEffect(() => {
     let attempt = 0
@@ -356,6 +369,9 @@ export function useDemoSession() {
             if (frame.error) waiting.reject(Object.assign(new Error(frame.error.message), { code: frame.error.code }))
             else waiting.resolve(frame.result ?? {})
           }
+          return
+        } else if (frame.type === 'listen.partial' || frame.type === 'listen.final' || frame.type === 'listen.error') {
+          listeners.current.forEach((hear) => hear(frame))
           return
         } else if (frame.type === 'pong') {
           if (typeof frame.t === 'number') dispatch({ kind: 'rtt', ms: Math.round(performance.now() - frame.t) })
@@ -412,7 +428,6 @@ export function useDemoSession() {
     reconnect: useCallback(() => connectNow.current(), []),
     cancel: useCallback(() => send({ type: 'cancel' }), [send]),
     reset: useCallback(() => send({ type: 'reset' }), [send]),
-    useDemoAccount: useCallback(() => send({ type: 'auth.demo' }), [send]),
     signOut: useCallback(() => send({ type: 'auth.sign_out' }), [send]),
     dismiss: useCallback(() => dispatch({ kind: 'dismiss' }), []),
     /** A card's `tools/call`, made by the server on the visitor's MCP session (W2-6). */
@@ -434,6 +449,42 @@ export function useDemoSession() {
         }),
       [],
     ),
+    /** Alexa's ears on the server: the fan's voice to Transcribe, and the words back. */
+    ears: useMemo(
+      () => ({
+        start: (id: number, rate: number) => send({ type: 'listen.start', id, rate }),
+        audio: (pcm: ArrayBuffer) => {
+          const socket = socketRef.current
+          if (socket?.readyState === WebSocket.OPEN) socket.send(pcm)
+        },
+        stop: (id: number) => send({ type: 'listen.stop', id }),
+        cancel: (id: number) => send({ type: 'listen.cancel', id }),
+        subscribe: (hear: (frame: ListenFrame) => void) => {
+          listeners.current.add(hear)
+          return () => {
+            listeners.current.delete(hear)
+          }
+        },
+      }),
+      [send],
+    ),
+    /** One sentence of Alexa's, as MP3 from Polly (`POST /api/speech`). */
+    speech: useCallback(async (text: string, signal: AbortSignal): Promise<ArrayBuffer> => {
+      const session = current.current
+      if (!session) throw Object.assign(new Error('No session yet.'), { status: 0 })
+      const response = await fetch('/api/speech', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Fanmoot-Session': session.session_id,
+          'X-Fanmoot-Token': session.resume_token,
+        },
+        body: JSON.stringify({ text }),
+        signal,
+      })
+      if (!response.ok) throw Object.assign(new Error(`Speech refused: ${response.status}`), { status: response.status })
+      return response.arrayBuffer()
+    }, []),
     /**
      * Must be called inside the click that asked for it, or the popup is
      * blocked. `signup` opens Fanmoot's sign-up form first (W4-5).

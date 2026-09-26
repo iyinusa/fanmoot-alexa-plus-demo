@@ -159,7 +159,11 @@
 
   @media (min-width: 768px) {
     .fm-device {
-      max-width: 1180px;
+      /* The screen is 16:10 and capped by the window's height (below), so the
+       * frame is capped by the same arithmetic plus the bezel's 22px a side.
+       * Without it, a laptop's short window narrows the screen and leaves the
+       * bezel full width, with a dead band of black beside the screen. */
+      max-width: min(1180px, max(calc((100dvh - 15rem) * 1.6 + 44px), calc(28rem * 1.6 + 44px)));
       margin-inline: auto;
       padding-top: 11px;
     }
@@ -420,6 +424,21 @@
   }
   .fm-scroll:hover::-webkit-scrollbar-thumb {
     background: var(--fm-line-strong);
+  }
+
+  /* The device's own screen: no scrollbar at all, as on an Echo Show. The
+   * columns still scroll — by touch, wheel, trackpad and keyboard — but a
+   * device draws no track or thumb, and a white gutter between the answer
+   * and its cards reads as a web page, not a screen. The trace inspector
+   * beside the device is a developer's tool, and keeps `fm-scroll`. */
+  .fm-screen-scroll {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .fm-screen-scroll::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
   }
 
   @media (prefers-reduced-motion: reduce) {

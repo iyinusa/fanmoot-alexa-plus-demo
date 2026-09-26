@@ -55,23 +55,37 @@ written.
   models ask for a one-time use-case form first; allow a day for it.
 - **An IAM user** for the demo with only this policy. The chain uses
   cross-region inference profiles (`us.…`), which need permission on the
-  profile *and* on the foundation model in every region it routes to:
+  profile *and* on the foundation model in every region it routes to. The
+  second statement is Alexa's voice (Amazon Polly) and ears (Amazon
+  Transcribe streaming); neither action takes a resource ARN, hence `*`:
 
   ```json
   {
     "Version": "2012-10-17",
-    "Statement": [{
-      "Effect": "Allow",
-      "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
-      "Resource": [
-        "arn:aws:bedrock:us-east-1:<ACCOUNT_ID>:inference-profile/us.amazon.nova-pro-v1:0",
-        "arn:aws:bedrock:us-east-1:<ACCOUNT_ID>:inference-profile/us.anthropic.claude-sonnet-4-6",
-        "arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1*",
-        "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*"
-      ]
-    }]
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+        "Resource": [
+          "arn:aws:bedrock:us-east-1:<ACCOUNT_ID>:inference-profile/us.amazon.nova-pro-v1:0",
+          "arn:aws:bedrock:us-east-1:<ACCOUNT_ID>:inference-profile/us.anthropic.claude-sonnet-4-6",
+          "arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1*",
+          "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*"
+        ]
+      },
+      {
+        "Effect": "Allow",
+        "Action": ["polly:SynthesizeSpeech", "transcribe:StartStreamTranscriptionWebSocket"],
+        "Resource": "*"
+      }
+    ]
   }
   ```
+
+  Without the second statement the demo still works: it logs
+  `voice_service_refused` once per ten minutes and each visitor's browser
+  speaks and listens with its own Web Speech API instead. Fixing the policy
+  is picked up within ten minutes, with no redeploy.
 
 - **An AWS Budget** on the account: a monthly cost budget with email alerts at
   50%, 80% and 100%. The demo's own ceilings live in process memory and reset
@@ -95,7 +109,7 @@ and `docker-compose.yml` already defaults the rest to production values.
 | `FMD_AWS_ACCESS_KEY_ID`, `FMD_AWS_SECRET_ACCESS_KEY` | the IAM user above. Without them the Bedrock rungs are skipped and `make smoke` fails. |
 | `FMD_AWS_REGION` | `us-east-1` (the compose default) |
 | `FMD_GEMINI_API_KEY` | a Google AI Studio key: the rung that answers when Bedrock cannot. |
-| `FMD_DEMO_FAN_EMAIL`, `FMD_DEMO_FAN_PASSWORD` | the shared demo account on fanmoot.com. Empty hides the "use the demo account" option. |
+| `FMD_VOICE_ID`, `FMD_VOICE_ENGINE` | leave unset: Polly's **Amy** (British English) on the **generative** engine, falling back to neural by itself. `FMD_VOICE_ENABLED=false` hands voice back to each visitor's browser. |
 | `FMD_ADMIN_TOKEN` | `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Keep a copy: the operator API and `make smoke`'s cost-guard check need it. |
 | `FMD_MODEL_CHAIN` | leave unset. The default is Nova Pro, then Claude on Bedrock, then Gemini. |
 | `FMD_OAUTH_CLIENT_MODE` | leave unset (`auto`). On https the demo identifies itself with a client ID metadata document it serves itself, so there is nothing to register on the MCP server. |
@@ -285,7 +299,7 @@ says `bedrock/…` before recording.
 
 There is no state to migrate. Rolling back ends every visitor's session (they
 reconnect to a fresh one) and revokes their own grants. It signs nobody out of
-Fanmoot itself, and the demo account relinks on first use.
+Fanmoot itself.
 
 ---
 

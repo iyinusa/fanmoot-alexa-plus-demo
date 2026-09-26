@@ -4,7 +4,9 @@ Conversation turns and MCP trace frames both travel here (HAD-10): the browser
 never holds a model credential, an MCP session or an OAuth token, so everything
 it learns about a turn it learns over this socket.
 
-Every frame, both ways, is a JSON object with a ``type``.
+Every frame, both ways, is a JSON object with a ``type`` — except the fan's
+voice, which goes up as binary frames of 16-bit PCM between ``listen.start``
+and ``listen.stop`` (``app.voice.listen``).
 
 **From the browser**
 
@@ -13,8 +15,11 @@ Every frame, both ways, is a JSON object with a ``type``.
 ``turn {text}``                  ask something
 ``cancel``                       stop the turn in flight
 ``reset``                        forget the conversation (keep the sign-in)
-``auth.demo``                    act as the shared demo fan (W1-8)
 ``auth.sign_out``                forget the fan's grant, and revoke it
+``listen.start {id, rate}``      the mic is open: relay what follows to Transcribe
+*binary*                         the fan's voice, 16-bit little-endian PCM at ``rate``
+``listen.stop {id}``             the fan has stopped talking: finish and say the words
+``listen.cancel {id}``           the mic closed with nothing to ask
 ``view.call {id, name, arguments}``  a card's ``tools/call`` through the host
                                  bridge (W2-6), answered with ``view.call.result``
 
@@ -34,6 +39,8 @@ asked for it.
 ``view`` · ``turn.end``  — one turn, as it happens (``app.agent.runtime``)
 ``trace``      one MCP, OAuth or model frame (``app.agent.trace``)
 ``view.call.result``  a card's call answered: ``result`` or ``error``, by ``id``
+``listen.partial`` · ``listen.final`` · ``listen.error``  what Transcribe heard,
+               by the ``id`` of the ``listen.start`` it answers
 ``ambient``    the corner ticker: what is in play, or what is next (W2-7)
 ``scenarios``  the guided scenarios' chips, written from what is on (W4)
 ``error``      something the visitor should know, with a ``code``
@@ -44,17 +51,16 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from typing import Any
+from typing import Any, TypeGuard
 
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
 from app import __version__
-from app.agent.demo_fan import DemoFanUnavailable
-from app.agent.oauth import OAuthError
 from app.logging_config import get_logger
 from app.session import SessionRegistry, VisitorSession
 from app.settings import get_settings
+from app.voice.listen import RATES
 
 router = APIRouter()
 log = get_logger("ws")
@@ -67,7 +73,14 @@ log = get_logger("ws")
 #:    request ``url`` on OAuth trace frames, for "copy as cURL".
 #: 5: W4 — ``scenarios``; ``label`` and ``link`` on a ``view`` that is a post
 #:    read back from Fanmoot; trace origins ``guide`` and ``verify``.
-WIRE_VERSION = 5
+#: 6: Alexa's voice and ears on AWS — ``voice`` in ``session``, the
+#:    ``listen.*`` frames and binary audio; the shared demo account is gone
+#:    (no ``auth.demo``, no ``demo_fan``).
+WIRE_VERSION = 6
+
+#: The largest binary frame of audio. The browser sends a tenth of a second
+#: (3,200 bytes at 16 kHz); a second at 48 kHz is still under this.
+MAX_AUDIO_FRAME_BYTES = 96_000
 
 #: The longest thing a fan can ask. A sentence said aloud, with room to spare.
 MAX_TURN_CHARS = 1_000
@@ -75,6 +88,11 @@ MAX_TURN_CHARS = 1_000
 
 def _error(code: str, message: str) -> dict[str, Any]:
     return {"type": "error", "code": code, "message": message}
+
+
+def _whole(value: Any) -> TypeGuard[int]:
+    """An integer, and not a bool dressed as one."""
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def client_address(websocket: WebSocket) -> str:
@@ -182,6 +200,15 @@ async def ws(websocket: WebSocket) -> None:
                 await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
                 break
 
+            audio = message.get("bytes")
+            if audio is not None:
+                if len(audio) > MAX_AUDIO_FRAME_BYTES:
+                    log.warning("ws_audio_frame_too_large", size=len(audio))
+                    await websocket.close(code=status.WS_1009_MESSAGE_TOO_BIG)
+                    break
+                link.session.listen_audio(audio)
+                continue
+
             text = message.get("text")
             if text is None:
                 link.session.send(_error("bad_frame", "Frames are JSON text."))
@@ -272,23 +299,6 @@ async def _handle(frame: dict[str, Any], link: _Link, registry: SessionRegistry)
         await session.reset()
         session.send(session.state_frame())
 
-    elif kind == "auth.demo":
-        if session.busy:
-            session.send(_error("busy", "Wait for the answer, then switch accounts."))
-            return
-        try:
-            await session.use_demo()
-        except (DemoFanUnavailable, OAuthError) as exc:
-            log.warning("demo_fan_unavailable", error=str(exc)[:200])
-            session.send(
-                _error(
-                    "demo_unavailable",
-                    str(exc)
-                    if isinstance(exc, DemoFanUnavailable)
-                    else "The demo account could not be linked just now.",
-                )
-            )
-
     elif kind == "view.call":
         call_id, name, arguments = frame.get("id"), frame.get("name"), frame.get("arguments", {})
         if not isinstance(call_id, str | int) or isinstance(call_id, bool):
@@ -307,6 +317,20 @@ async def _handle(frame: dict[str, Any], link: _Link, registry: SessionRegistry)
             )
             return
         session.start_view_call(call_id, name, arguments)
+
+    elif kind == "listen.start":
+        listen_id, rate = frame.get("id"), frame.get("rate")
+        if not _whole(listen_id) or not _whole(rate) or rate not in RATES:
+            session.send(_error("bad_listen", "Listening needs an `id` and a `rate` in Hz."))
+            return
+        await session.start_listening(listen_id, rate)
+
+    elif kind == "listen.stop":
+        if _whole(frame.get("id")):
+            session.finish_listening(frame["id"])
+
+    elif kind == "listen.cancel":
+        await session.cancel_listening()
 
     elif kind == "auth.sign_out":
         if session.busy:

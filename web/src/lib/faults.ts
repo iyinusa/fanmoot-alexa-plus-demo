@@ -36,7 +36,6 @@ const NOTICE: Record<string, string> = {
   address_cap: "I've answered a lot of questions from here this hour. Give me a little while, then ask again.",
   daily_cap: "I've answered all the questions I can for today. I'll be back after midnight UTC. Thanks for trying me out!",
   resume_failed: 'That conversation had timed out, so we’re starting a fresh one.',
-  demo_unavailable: "Sorry, the demo account isn't available just now. You can sign in with your own.",
   bad_frame: 'Sorry, something got garbled on the way. Try that again.',
   unknown_type: 'Sorry, something got garbled on the way. Try that again.',
   offline_ask: "I'm not connected just now. I'll be back in a moment, and your words are still in the box.",

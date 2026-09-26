@@ -45,7 +45,9 @@ DEFAULT_MODEL_CHAIN = (
 )
 
 #: W6-3's per-provider daily ceilings, in US dollars. See `provider_daily_cap_usd`.
-DEFAULT_PROVIDER_CAPS = '{"bedrock": 30, "gemini": 10}'
+#: Polly and Transcribe are Alexa's voice and ears: each is capped on its own,
+#: so a day's talking cannot eat the models' budget.
+DEFAULT_PROVIDER_CAPS = '{"bedrock": 30, "gemini": 10, "polly": 4, "transcribe": 4}'
 
 
 class Settings(BaseSettings):
@@ -126,8 +128,7 @@ class Settings(BaseSettings):
     ambient_idle_interval_s: float = 300.0
 
     # `tools/call`s a card may make through the host in one session (W2-6) —
-    # the thread view's reply composer. A write still spends the demo
-    # account's allowance as well; this bounds a card that loops.
+    # the thread view's reply composer. This bounds a card that loops.
     view_calls_per_session: int = 30
 
     # ── Guided scenarios (W4) ────────────────────────────────────────────────
@@ -187,6 +188,9 @@ class Settings(BaseSettings):
     # 11–17k tokens in and under 100 out, so about $0.011 on Nova Pro, $0.044
     # on Claude Sonnet and $0.003 on Gemini Flash-Lite. $30 of Bedrock is some
     # 2,700 Nova turns or 680 Claude turns; $10 of Gemini is 3,000 turns.
+    # A spoken answer is about 200 characters, so $4 of Polly's generative
+    # voice ($30 a million) is some 650 answers; $4 of Transcribe ($0.024 a
+    # minute, 15 s minimum) is some 650 questions asked aloud.
     provider_daily_cap_usd: str = DEFAULT_PROVIDER_CAPS
 
     # The demo-wide ceilings (W6-3). The per-session turn cap bounds one tab
@@ -205,6 +209,28 @@ class Settings(BaseSettings):
     # turns; 60 on Claude Sonnet is about $2.60.
     address_turns_per_hour: int = 60
 
+    # ── Alexa's voice and ears ───────────────────────────────────────────────
+    # Speech out is Amazon Polly and speech in is Amazon Transcribe, both
+    # called from this server with the same AWS credentials as Bedrock, so
+    # the browser needs no plugin, no key and no speech engine of its own.
+    # Off, or with no AWS credentials, the browser's own Web Speech API is
+    # used instead, where it has one.
+    voice_enabled: bool = True
+    # A Polly voice and engine. `generative` is Polly's most natural-sounding
+    # engine; a voice or region without it falls back to `neural` on its own.
+    voice_id: str = "Amy"
+    voice_engine: str = "generative"
+    # What Transcribe listens for. Fanmoot's names are English, and British
+    # English hears "Arsenal" and "Nottingham Forest" best.
+    voice_language: str = "en-GB"
+    # Characters Polly may speak for one session: about 40 answers. The
+    # daily ceilings in `provider_daily_cap_usd` hold across sessions.
+    voice_chars_per_session: int = 15_000
+    # Seconds of the fan's voice one session may send to Transcribe, and the
+    # longest one utterance may run before it is cut off and answered.
+    listen_seconds_per_session: int = 600
+    listen_max_utterance_s: float = 30.0
+
     # ── OAuth: how this demo signs a fan in (W1-7) ───────────────────────────
     # How the demo identifies itself to the MCP server's authorization server:
     #   auto               static if FMD_OAUTH_CLIENT_ID is set; otherwise a
@@ -218,21 +244,6 @@ class Settings(BaseSettings):
     oauth_client_mode: str = "auto"
     oauth_client_id: str = ""
     oauth_client_secret: str = ""
-
-    # ── The demo fan (W1-8) ──────────────────────────────────────────────────
-    # A real Fanmoot account for visitors who will not sign up. The demo links
-    # it through the same OAuth flow a visitor goes through, headlessly, at
-    # first use. Unset, and the option is simply not offered.
-    demo_fan_email: str = ""
-    demo_fan_password: str = ""
-    # How the account is described on screen and to the model.
-    demo_fan_label: str = "Demo fan account"
-
-    # Posts, replies, reactions, predictions and follows the shared account may
-    # make: per visitor session, and across all of them per hour. A public
-    # account on a public URL needs both.
-    demo_fan_writes_per_session: int = 5
-    demo_fan_writes_per_hour: int = 30
 
     # ── Operator ─────────────────────────────────────────────────────────────
     # Bearer token for `/api/admin/*` — the model chain and the spend figures.
@@ -299,10 +310,6 @@ class Settings(BaseSettings):
     def oauth_metadata_document_url(self) -> str:
         """This demo's SEP-991 client id: the URL of its own metadata."""
         return f"{self.public_base_url}/oauth/client-metadata.json"
-
-    @property
-    def demo_fan_configured(self) -> bool:
-        return bool(self.demo_fan_email.strip() and self.demo_fan_password)
 
     @property
     def model_price_overrides(self) -> dict[str, tuple[float, float]]:

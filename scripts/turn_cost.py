@@ -35,7 +35,6 @@ from typing import Any
 import structlog
 
 from app.agent import models
-from app.agent.demo_fan import DemoFan
 from app.agent.oauth import DemoOAuthClient
 from app.agent.scenario import MATCHDAY
 from app.agent.usage import estimate_usd
@@ -47,7 +46,7 @@ from app.settings import Settings, get_settings
 async def measure(settings: Settings) -> list[dict[str, Any]]:
     """The `turn.end` frame of each scenario turn, in order."""
     oauth = DemoOAuthClient(settings)
-    session = VisitorSession(settings, oauth=oauth, demo_fan=DemoFan(settings, oauth))
+    session = VisitorSession(settings, oauth=oauth)
     queue = session.outbox.attach()
     ends: list[dict[str, Any]] = []
     try:

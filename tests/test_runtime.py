@@ -18,7 +18,6 @@ from google.adk.models.base_llm import BaseLlm
 from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 
-from app.agent.demo_fan import DemoFan
 from app.agent.oauth import DemoOAuthClient, Grant, GrantHolder, RegisteredClient
 from app.session import VisitorSession
 from app.settings import Settings
@@ -33,7 +32,6 @@ def _session(server: RunningServer, llm: BaseLlm, **overrides: Any) -> VisitorSe
     return VisitorSession(
         settings,
         oauth=oauth,
-        demo_fan=DemoFan(settings, oauth),
         llm_factory=lambda _rung, _settings: llm,
     )
 
@@ -213,25 +211,6 @@ async def test_a_signed_in_fan_can_post(mcp_server: RunningServer) -> None:
     assert "The fan is signed in to Fanmoot" in str(llm.requests[0].config.system_instruction)
 
 
-async def test_the_demo_account_is_rationed(mcp_server: RunningServer) -> None:
-    llm = ScriptedLlm.of(call("post_moot", body="take"), say("That's the limit."))
-    session = _session(mcp_server, llm, demo_fan_writes_per_session=1)
-    _signed_in(session)
-    session.auth_mode = "demo"
-    session.demo_writes = 1
-    sent_before = mcp_server.calls.count("tools/call")
-    try:
-        frames = await _turn(session, "post another")
-    finally:
-        session.holder = None
-        await session.close()
-
-    end_of_tool = next(frame for frame in frames if frame["type"] == "tool.end")
-    assert end_of_tool["reason"] == "demo_limit"
-    # Refused here: the server was never asked.
-    assert mcp_server.calls.count("tools/call") == sent_before
-
-
 async def test_the_conversation_is_remembered_between_turns(mcp_server: RunningServer) -> None:
     llm = ScriptedLlm.of(say("Arsenal."), say("Tonight at eight."))
     session = _session(mcp_server, llm)
@@ -303,15 +282,13 @@ async def test_the_turn_cap_holds(mcp_server: RunningServer) -> None:
         await session.close()
 
 
-@pytest.mark.parametrize("mode", ["none", "demo", "linked"])
+@pytest.mark.parametrize("mode", ["none", "linked"])
 def test_identity_lines_are_honest(mode: str) -> None:
     from app.agent.instructions import identity_line
 
-    line = identity_line(mode, handle="alexa_demo", label="Demo fan account", scopes=["moot.write"])
+    line = identity_line(mode, handle="alexa_demo", scopes=["moot.write"])
 
-    if mode == "demo":
-        assert "shared account" in line and "@alexa_demo" in line
-    elif mode == "linked":
+    if mode == "linked":
         assert "signed in to Fanmoot as @alexa_demo" in line
     else:
         assert "not signed in" in line

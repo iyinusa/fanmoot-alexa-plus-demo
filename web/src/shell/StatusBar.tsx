@@ -1,6 +1,8 @@
 /**
  * The strip along the top of the screen: the time, the ticker (W2-7), and who
- * the fan is — with sign-in, the demo account and sign-out one tap away.
+ * the fan is — with signing up, signing in and signing out one tap away.
+ * There is no shared account: a take posted from here goes out under the
+ * fan's own handle, on their own Fanmoot account.
  *
  * The account control is a disclosure, not an ARIA menu (W5-5): a `menu`
  * role promises arrow-key navigation, and two buttons are better served by
@@ -31,18 +33,14 @@ export function StatusBar({
   status,
   auth,
   ambient,
-  demoAvailable,
   signIn,
-  useDemo,
   signOut,
   showTicker,
 }: {
   status: SocketStatus
   auth: AuthState | null
   ambient: Ambient | null
-  demoAvailable: boolean
-  signIn: () => void
-  useDemo: () => void
+  signIn: (options?: { signup?: boolean }) => void
   signOut: () => void
   showTicker: boolean
 }) {
@@ -71,8 +69,7 @@ export function StatusBar({
     }
   }, [open])
 
-  const who =
-    !auth || auth.mode === 'none' ? 'Guest' : auth.mode === 'demo' ? `@${auth.handle ?? 'demo'}` : `@${auth.handle ?? '…'}`
+  const who = !auth || auth.mode === 'none' ? 'Guest' : `@${auth.handle ?? '…'}`
 
   return (
     <div className="relative z-20 flex h-11 shrink-0 items-center gap-3 px-4 text-sm @3xl:h-12 @3xl:px-5">
@@ -101,7 +98,7 @@ export function StatusBar({
           <span
             aria-hidden="true"
             className={`grid size-5 place-items-center rounded-full text-[10px] font-bold text-white ${
-              auth?.mode === 'linked' ? 'bg-[var(--fm-green)]' : auth?.mode === 'demo' ? 'bg-[var(--fm-amber)]' : 'bg-[var(--fm-blue)]'
+              auth?.mode === 'linked' ? 'bg-[var(--fm-green)]' : 'bg-[var(--fm-blue)]'
             }`}
           >
             {who.replace('@', '').charAt(0).toUpperCase()}
@@ -125,29 +122,21 @@ export function StatusBar({
                   <p className="px-2 pb-2 pt-1 text-xs text-muted">Reading works as a guest. Posting needs a Fanmoot account.</p>
                   <MenuItem onClick={() => {
                       setOpen(false)
+                      signIn({ signup: true })
+                    }}>Create a Fanmoot account</MenuItem>
+                  <MenuItem onClick={() => {
+                      setOpen(false)
                       signIn()
                     }}>Sign in to Fanmoot</MenuItem>
-                  {demoAvailable && <MenuItem onClick={() => {
-                      setOpen(false)
-                      useDemo()
-                    }}>Use the demo account</MenuItem>}
                 </>
               ) : (
                 <>
-                  <p className="px-2 pb-2 pt-1 text-xs text-muted">
-                    {auth.mode === 'demo' ? (
-                      <>
-                        <span className="font-bold text-[var(--fm-amber)]">{auth.label}</span> — shared, and rate-limited.
-                      </>
-                    ) : (
-                      <>Linked with {auth.method ?? 'OAuth'}.</>
-                    )}
-                  </p>
+                  <p className="px-2 pb-2 pt-1 text-xs text-muted">Linked with {auth.method ?? 'OAuth'}.</p>
                   <MenuItem onClick={() => {
                       setOpen(false)
                       signOut()
                     }}>
-                    {auth.mode === 'demo' ? 'Stop using the demo account' : 'Sign out and disconnect'}
+                    Sign out and disconnect
                   </MenuItem>
                 </>
               )}

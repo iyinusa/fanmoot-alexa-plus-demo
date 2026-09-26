@@ -26,7 +26,6 @@ from typing import Any
 
 import pytest
 
-from app.agent.demo_fan import DemoFan
 from app.agent.oauth import DemoOAuthClient
 from app.agent.scenario import MATCHDAY
 from app.session import VisitorSession
@@ -41,7 +40,7 @@ LIVE_MCP_URL = os.environ.get("FMD_LIVE_MCP_URL", "https://mcp.fanmoot.com/mcp")
 def _session(settings: Settings, llm_factory: Any = None) -> VisitorSession:
     oauth = DemoOAuthClient(settings)
     kwargs = {"llm_factory": llm_factory} if llm_factory else {}
-    return VisitorSession(settings, oauth=oauth, demo_fan=DemoFan(settings, oauth), **kwargs)
+    return VisitorSession(settings, oauth=oauth, **kwargs)
 
 
 async def _run(session: VisitorSession) -> list[list[dict[str, Any]]]:

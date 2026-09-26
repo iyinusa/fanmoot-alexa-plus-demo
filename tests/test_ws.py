@@ -60,7 +60,7 @@ def test_greets_with_hello(client: TestClient) -> None:
 
     assert hello["type"] == "hello"
     assert hello["service"] == "fanmoot-alexa-plus-demo"
-    assert hello["wire"] == WIRE_VERSION == 5
+    assert hello["wire"] == WIRE_VERSION == 6
     assert hello["mcp_url"] == "https://mcp.fanmoot.test/mcp"
     assert len(hello["session_id"]) >= 16
     assert len(hello["resume_token"]) >= 32
@@ -102,11 +102,25 @@ def test_a_bad_frame_is_answered_and_the_socket_survives(
         assert until(socket, "pong")["type"] == "pong"
 
 
-def test_binary_frames_are_refused(client: TestClient) -> None:
+def test_audio_with_no_listening_open_goes_nowhere(client: TestClient) -> None:
+    # Binary frames are the fan's voice (app.voice.listen). With no
+    # `listen.start` before them there is nothing to relay them to, and the
+    # socket carries on.
     with client.websocket_connect("/ws") as socket:
         socket.send_bytes(b"\x00\x01")
+        socket.send_json({"type": "ping", "t": 1})
 
-        assert until(socket, "error")["code"] == "bad_frame"
+        assert until(socket, "pong")["t"] == 1
+
+
+def test_an_oversized_audio_frame_closes_the_socket(client: TestClient) -> None:
+    with client.websocket_connect("/ws") as socket:
+        socket.send_bytes(b"\x00" * 100_000)
+
+        with pytest.raises(WebSocketDisconnect) as closed:
+            for _ in range(100):
+                socket.receive_json()
+    assert closed.value.code == 1009
 
 
 def test_an_oversized_frame_closes_the_socket(client: TestClient) -> None:
@@ -144,7 +158,6 @@ def test_the_session_frame_follows_hello(client: TestClient) -> None:
     assert session["auth"]["mode"] == "none"
     assert session["auth"]["method"] is None  # no grant, so no claim of OAuth
     assert session["sign_in_url"].startswith("/oauth/start?ticket=")
-    assert session["demo_fan"]["available"] is False
     assert session["turns_left"] == 40
 
 
@@ -263,9 +276,12 @@ def test_reset_forgets_the_conversation(live_client: TestClient) -> None:
         until(socket, "session.reset")
 
 
-def test_the_demo_account_needs_configuring(client: TestClient) -> None:
+def test_there_is_no_shared_demo_account(client: TestClient) -> None:
+    # Fans register and sign in as themselves: the old shared account is gone.
     with client.websocket_connect("/ws") as socket:
+        session = until(socket, "session")
         socket.send_json({"type": "auth.demo"})
         error = until(socket, "error")
 
-    assert error["code"] == "demo_unavailable"
+    assert "demo_fan" not in session
+    assert error["code"] == "unknown_type"

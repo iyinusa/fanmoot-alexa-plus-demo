@@ -1,42 +1,51 @@
 /**
- * Voice in and voice out, from the browser's own Web Speech API (W2-4, W2-5).
+ * Voice in and voice out (W2-4, W2-5): Alexa's ears and Alexa's voice.
  *
- * **In.** `useListener` wraps `SpeechRecognition` (still `webkit`-prefixed in
- * Chrome and Safari; absent in Firefox). Interim words are shown as they are
- * heard, the final transcript becomes a turn, and a leading "Alexa," is
- * dropped the way a device drops its wake word. Where recognition does not
- * exist, or the mic is refused, `supported` / `error` say so and the typed
- * field is the way in — the demo works in every browser and in a quiet room.
+ * Both run on AWS where the session says they can (app/voice), and fall back
+ * to the browser's own Web Speech API where they cannot — no AWS credentials,
+ * an IAM policy that does not allow them, the day's ceiling reached.
+ *
+ * **In: Amazon Transcribe.** `useListener` records the mic through an
+ * AudioWorklet (lib/audio.ts) — which Chrome, Edge, Firefox, Safari and Brave
+ * all have — and streams it up `/ws`, where the server relays it to
+ * Transcribe. Words come back as they are heard and are shown big; the
+ * endpointer decides when the fan has stopped, and the finished sentence
+ * becomes a turn. A leading "Alexa," is dropped the way a device drops its
+ * wake word. The browser's `SpeechRecognition` is the fallback, and the typed
+ * field is always there.
  *
  * Getting the microphone to work, in order:
  *
  * 1. **A secure page.** Browsers only give the mic to `https://` or
  *    `localhost`. A phone opening a laptop's `http://192.168…` address gets
  *    nothing, and is told so, rather than an error that means nothing.
- * 2. **One permission prompt, settled first.** On a desktop the meter opens
- *    its own capture for the waveform. Started at the same moment as
- *    recognition, the two ask for the mic together, and Chrome can fail the
- *    recognition with `not-allowed` or `aborted` while its prompt is still
- *    up. So until the mic has been granted, it is asked for first, on its
- *    own, and recognition starts once the answer is in. Once granted, both
- *    start together as before.
- * 3. **Errors that name the fix.** `network` from Brave or an editor's
- *    built-in browser means it has no speech service at all, not that the
- *    connection dropped. `audio-capture` on a Mac is often the operating
- *    system refusing the browser the mic. Each says where to go.
- * 4. **English.** Recognition listens in the browser's own English, and in
- *    British English for a browser set to any other language: Fanmoot's
- *    names are English, and a French recogniser hears "Arsenal" as French.
+ * 2. **One capture.** The mic is opened once, and the same input feeds the
+ *    waveform and Transcribe. (The fallback recogniser opens its own, so the
+ *    meter's capture asks for permission first there — see `startBrowser`.)
+ * 3. **Errors that name the fix.** A blocked mic, a Mac refusing the browser
+ *    the mic, another app holding it: each says where to go.
  *
- * **Out.** `useSpeaker` speaks sentences as they complete, so Alexa starts
- * talking while the rest of the answer is still streaming, and reports which
- * words have been said for the captions track. Captions are on by default:
- * the demo is watched with the sound off as often as with it on (S6-7, X3-4).
+ * **Out: Amazon Polly.** `useSpeaker` sends each sentence to Polly as it
+ * completes (`POST /api/speech`), fetching the next while this one plays, so
+ * Alexa starts talking while the rest of the answer is still streaming. The
+ * audio plays through Web Audio, with an analyser on it for the waveform, and
+ * the captions follow the audio's own clock. The browser's `speechSynthesis`
+ * is the fallback. Captions are on by default: the demo is watched with the
+ * sound off as often as with it on (S6-7, X3-4).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import {
+  audioSessionFor,
+  canCapture,
+  type Capture,
+  Endpointer,
+  openCapture,
+  playbackContext,
+} from '@/lib/audio'
 import { volumeTick } from '@/lib/earcon'
-import { meterAllowed, type MicOpened, openMic, pulse } from '@/lib/meter'
+import { attachAnalyser, detachAnalyser, meterAllowed, type MicOpened, openMic, pulse } from '@/lib/meter'
+import type { ListenFrame } from '@/lib/protocol'
 
 // ── Types TypeScript's DOM lib does not carry ────────────────────────────────
 type Alternative = { transcript: string }
@@ -62,6 +71,22 @@ function recognitionCtor(): RecognitionCtor | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null
 }
 
+/** Alexa's ears on the server (lib/socket.ts `ears`), when the session has them. */
+export type RemoteEars = {
+  available: boolean
+  start: (id: number, rate: number) => boolean
+  audio: (pcm: ArrayBuffer) => void
+  stop: (id: number) => void
+  cancel: (id: number) => void
+  subscribe: (hear: (frame: ListenFrame) => void) => () => void
+}
+
+/** Alexa's voice on the server (lib/socket.ts `speech`), when the session has it. */
+export type RemoteVoice = {
+  available: boolean
+  fetch: (text: string, signal: AbortSignal) => Promise<ArrayBuffer>
+}
+
 /**
  * "Alexa, what's the score?" → "what's the score?" — and "Alexa" alone → "".
  * Recognisers often mishear the wake word ("Alexis", "a Lexa"), so those go
@@ -79,7 +104,7 @@ function capitalise(text: string): string {
 const MAC = /Mac/.test(navigator.platform) || /Mac OS X/.test(navigator.userAgent)
 const MAC_SETTING = MAC ? ' On a Mac, also allow your browser in System Settings → Privacy & Security → Microphone.' : ''
 
-/** Browsers that have the API but no speech service behind it. */
+/** Browsers that have the recognition API but no speech service behind it. */
 function noSpeechService(): boolean {
   return 'brave' in navigator || /Electron|Code\/|Cursor/i.test(navigator.userAgent)
 }
@@ -95,12 +120,15 @@ const LISTEN_ERRORS: Record<string, string> = {
   insecure:
     'The microphone only works on a secure page. Open the demo at https://alexaplus.fanmoot.com (or on localhost), or type instead.',
   busy: 'Another app is using the microphone. Close it and try again, or type instead.',
+  offline: "I'm not connected just now, so I can't listen. Try again in a moment, or type instead.",
+  garbled: "I couldn't hear that properly. Try again, or type instead.",
+  unavailable: "I can't listen in this browser just now. Type instead.",
 }
 
 function listenError(code: string): string {
   if (code === 'network') {
     return noSpeechService()
-      ? "This browser has no speech service, so it can't listen. Chrome, Edge and Safari can, or type instead."
+      ? "This browser has no speech service, so it can't listen here just now. Type instead."
       : "Speech recognition couldn't reach its service. Check the connection, or type instead."
   }
   return LISTEN_ERRORS[code] ?? "That didn't work. Type instead."
@@ -115,6 +143,12 @@ const MIC_ERRORS: Record<string, string> = {
   NotReadableError: 'busy',
   AbortError: 'busy',
 }
+
+/**
+ * Why the server would not listen, where the browser's own recogniser (if it
+ * has one) should take over: off, refused by AWS, over a ceiling.
+ */
+const HAND_BACK = new Set(['off', 'unavailable', 'no_credentials', 'daily_cap', 'listen_cap'])
 
 /** English, as the browser speaks it, or British English. */
 function listeningLanguage(): string {
@@ -134,15 +168,39 @@ async function micGranted(): Promise<boolean | null> {
 
 export type ListenState = 'idle' | 'listening'
 
-export function useListener(onHeard: (text: string) => void) {
-  const [supported] = useState(() => recognitionCtor() !== null)
+type RemoteRun = {
+  id: number
+  capture: Capture | null
+  finishing: boolean
+  heard: string
+  unsubscribe: () => void
+  timer?: number
+}
+
+export function useListener(onHeard: (text: string) => void, remote: RemoteEars | null = null) {
+  const [browserCan] = useState(() => recognitionCtor() !== null)
+  const [remoteCan] = useState(canCapture)
+  /** The server said no for this page: the browser's recogniser from now on. */
+  const [handedBack, setHandedBack] = useState(false)
+  const serverListens = Boolean(remote?.available) && remoteCan && !handedBack
+  const supported = serverListens || browserCan
+
   const [state, setState] = useState<ListenState>('idle')
   const [interim, setInterim] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const recognition = useRef<Recognition | null>(null)
-  const closeMic = useRef<(() => void) | null>(null)
+  /** The browser's permission prompt is up. */
+  const [asking, setAsking] = useState(false)
   const heard = useRef(onHeard)
   heard.current = onHeard
+  const ears = useRef(remote)
+  ears.current = remote
+  const viaServer = useRef(serverListens)
+  viaServer.current = serverListens
+
+  // ── The browser's own recogniser (the fallback) ──────────────────────────
+  const recognition = useRef<Recognition | null>(null)
+  const closeMic = useRef<(() => void) | null>(null)
+  const opening = useRef(false)
 
   const release = useCallback(() => {
     closeMic.current?.()
@@ -151,12 +209,6 @@ export function useListener(onHeard: (text: string) => void) {
     setState('idle')
   }, [])
 
-  const stop = useCallback(() => recognition.current?.stop(), [])
-
-  const opening = useRef(false)
-  /** The browser's permission prompt is up. */
-  const [asking, setAsking] = useState(false)
-
   const begin = useCallback((Ctor: RecognitionCtor, micReady: MicOpened | null) => {
     const rec = new Ctor()
     rec.lang = listeningLanguage()
@@ -164,6 +216,7 @@ export function useListener(onHeard: (text: string) => void) {
     rec.continuous = false
     rec.maxAlternatives = 1
     let final = ''
+    let failed = false
 
     rec.onspeechstart = () => pulse(0.6)
     rec.onresult = (event) => {
@@ -185,7 +238,6 @@ export function useListener(onHeard: (text: string) => void) {
       failed = true
       if (event.error !== 'aborted') setError(listenError(event.error))
     }
-    let failed = false
     rec.onend = () => {
       release()
       setInterim('')
@@ -218,16 +270,16 @@ export function useListener(onHeard: (text: string) => void) {
     else void openMic().then(attach)
   }, [release])
 
-  const start = useCallback(async () => {
+  /**
+   * On a desktop the meter opens its own capture for the waveform. Started at
+   * the same moment as recognition, the two ask for the mic together, and
+   * Chrome can fail the recognition with `not-allowed` while its prompt is
+   * still up. So until the mic has been granted, it is asked for first, on
+   * its own, and recognition starts once the answer is in.
+   */
+  const startBrowser = useCallback(async () => {
     const Ctor = recognitionCtor()
     if (!Ctor || recognition.current || opening.current) return
-    if (!window.isSecureContext) {
-      setError(LISTEN_ERRORS.insecure!)
-      return
-    }
-    setError(null)
-    // Granted already, or a touch device (no meter capture to race with):
-    // start at once. Otherwise ask for the mic on its own first (see above).
     if (!meterAllowed() || (await micGranted()) === true) {
       begin(Ctor, null)
       return
@@ -248,8 +300,157 @@ export function useListener(onHeard: (text: string) => void) {
     begin(Ctor, opened)
   }, [begin])
 
+  // ── Transcribe, through the server ───────────────────────────────────────
+  const run = useRef<RemoteRun | null>(null)
+  const sequence = useRef(0)
+  /** Streams in a row that failed outright. Two, and the browser takes over. */
+  const failures = useRef(0)
+
+  /** Close everything this utterance opened. `said` null: nothing to ask. */
+  const endRemote = useCallback((said: string | null, problem?: string) => {
+    const current = run.current
+    if (!current) return
+    run.current = null
+    current.capture?.close()
+    current.unsubscribe()
+    window.clearTimeout(current.timer)
+    setInterim('')
+    setAsking(false)
+    setState('idle')
+    if (problem) {
+      setError(problem)
+      return
+    }
+    if (said === null) return
+    const text = capitalise(withoutWakeWord(said))
+    if (text) heard.current(text)
+    else setError(LISTEN_ERRORS['no-speech']!)
+  }, [])
+
+  /** The fan has stopped (or tapped): the last words are on their way. */
+  const finishRemote = useCallback(() => {
+    const current = run.current
+    if (!current || current.finishing) return
+    current.finishing = true
+    if (!current.capture) {
+      // Stopped while the permission prompt was still up: nothing was said.
+      ears.current?.cancel(current.id)
+      endRemote(null)
+      return
+    }
+    current.capture.close()
+    current.capture = null
+    ears.current?.stop(current.id)
+    // The last words normally land within a second. If they never do, what
+    // was heard so far is still the fan's question.
+    current.timer = window.setTimeout(() => endRemote(current.heard), 7000)
+  }, [endRemote])
+
+  const startRemote = useCallback(async () => {
+    const server = ears.current
+    if (!server || run.current) return
+    const id = ++sequence.current
+    const endpointer = new Endpointer()
+    const current: RemoteRun = { id, capture: null, finishing: false, heard: '', unsubscribe: () => {} }
+    run.current = current
+    setError(null)
+    setInterim('')
+    setState('listening')
+
+    current.unsubscribe = server.subscribe((frame) => {
+      if (frame.id !== id || run.current !== current) return
+      if (frame.type === 'listen.partial') {
+        current.heard = frame.text
+        endpointer.heard(frame.text)
+        setInterim(withoutWakeWord(frame.text))
+      } else if (frame.type === 'listen.final') {
+        failures.current = 0
+        endRemote(frame.text || current.heard)
+      } else if (current.heard) {
+        // It broke after hearing something: that is still the question.
+        endRemote(current.heard)
+      } else if (HAND_BACK.has(frame.code) || ++failures.current >= 2) {
+        // Transcribe is off, refused or spent, or has failed twice running:
+        // this browser's own recogniser takes over, for this question and the
+        // rest of the visit — or, with none, the typed field does.
+        console.info('server listening unavailable:', frame.code)
+        setHandedBack(true)
+        if (browserCan) {
+          endRemote(null)
+          void startBrowser()
+        } else {
+          endRemote(null, frame.code === 'listen_cap' ? frame.message : LISTEN_ERRORS.unavailable)
+        }
+      } else {
+        endRemote(null, LISTEN_ERRORS.garbled)
+      }
+    })
+
+    if ((await micGranted()) !== true) setAsking(true)
+    let connected = true
+    const opened = await openCapture(
+      (rate) => {
+        if (run.current === current) connected = server.start(id, rate)
+      },
+      (pcm, level) => {
+        if (run.current !== current || current.finishing) return
+        server.audio(pcm)
+        const verdict = endpointer.push(level)
+        if (verdict === 'stop') finishRemote()
+        else if (verdict === 'nothing') {
+          server.cancel(id)
+          endRemote('')
+        }
+      },
+    )
+    setAsking(false)
+    if ('error' in opened) {
+      if (run.current !== current) return
+      console.info('microphone refused:', opened.error)
+      if (opened.error === 'unavailable' && browserCan) {
+        // No AudioWorklet after all: the browser's recogniser instead.
+        setHandedBack(true)
+        endRemote(null)
+        void startBrowser()
+        return
+      }
+      endRemote(null, listenError(MIC_ERRORS[opened.error] ?? (opened.error === 'unavailable' ? 'unavailable' : 'audio-capture')))
+      return
+    }
+    if (run.current !== current || current.finishing) {
+      opened.close()
+      return
+    }
+    current.capture = opened
+    if (!connected) endRemote(null, LISTEN_ERRORS.offline)
+  }, [browserCan, endRemote, finishRemote, startBrowser])
+
+  // ── The controls ─────────────────────────────────────────────────────────
+  const start = useCallback(async () => {
+    if (run.current || recognition.current || opening.current) return
+    if (!window.isSecureContext) {
+      setError(LISTEN_ERRORS.insecure!)
+      return
+    }
+    setError(null)
+    if (viaServer.current) await startRemote()
+    else if (browserCan) await startBrowser()
+  }, [browserCan, startBrowser, startRemote])
+
+  const stop = useCallback(() => {
+    if (run.current) finishRemote()
+    else recognition.current?.stop()
+  }, [finishRemote])
+
   useEffect(
     () => () => {
+      const current = run.current
+      if (current) {
+        ears.current?.cancel(current.id)
+        current.capture?.close()
+        current.unsubscribe()
+        window.clearTimeout(current.timer)
+      }
       recognition.current?.abort()
       closeMic.current?.()
     },
@@ -258,6 +459,8 @@ export function useListener(onHeard: (text: string) => void) {
 
   return {
     supported,
+    /** Whose ears: Amazon Transcribe, or the browser's own recogniser. */
+    engine: serverListens ? ('transcribe' as const) : browserCan ? ('browser' as const) : null,
     state,
     asking,
     interim,
@@ -265,7 +468,10 @@ export function useListener(onHeard: (text: string) => void) {
     clearError: useCallback(() => setError(null), []),
     start,
     stop,
-    toggle: useCallback(() => (recognition.current ? stop() : void start()), [start, stop]),
+    toggle: useCallback(
+      () => (run.current || recognition.current ? stop() : void start()),
+      [start, stop],
+    ),
   }
 }
 
@@ -308,19 +514,44 @@ export function completeSentences(text: string, from: number): { sentences: stri
   return { sentences, next }
 }
 
-export function useSpeaker() {
-  const [supported] = useState(() => typeof window !== 'undefined' && 'speechSynthesis' in window)
+/** The end of the word `index` falls in, so a caption never stops mid-word. */
+function wordEnd(text: string, index: number): number {
+  if (index >= text.length) return text.length
+  const rest = text.slice(index).search(/\s|$/)
+  return index + Math.max(0, rest)
+}
+
+type Queued = { text: string; audio: Promise<AudioBuffer>; abort: AbortController }
+type Playing = { source: AudioBufferSourceNode; timer: number }
+
+/** How long a suspended context gets to start before the browser's voice is used. */
+const RESUME_WAIT_MS = 400
+
+export function useSpeaker(remote: RemoteVoice | null = null) {
+  const [browserCan] = useState(() => typeof window !== 'undefined' && 'speechSynthesis' in window)
+  const [audioCan] = useState(() => typeof AudioContext !== 'undefined')
+  /** Polly refused this page (401, 429, 503): the browser's voice from now on. */
+  const [refused, setRefused] = useState(false)
+  const pollySpeaks = Boolean(remote?.available) && audioCan && !refused
+  const supported = pollySpeaks || browserCan
+
   const [speaking, setSpeaking] = useState(false)
   const [caption, setCaption] = useState<Caption | null>(null)
   const [muted, setMuted] = useState(false)
   const [volume, setVolume] = useState(0.9)
-  const voice = useRef<SpeechSynthesisVoice | null>(null)
-  const pending = useRef(0)
   const settings = useRef({ muted, volume })
   settings.current = { muted, volume }
+  const voiceRemote = useRef(remote)
+  voiceRemote.current = remote
+  const viaPolly = useRef(pollySpeaks)
+  viaPolly.current = pollySpeaks
+
+  // ── The browser's own voice (the fallback) ───────────────────────────────
+  const voice = useRef<SpeechSynthesisVoice | null>(null)
+  const pending = useRef(0)
 
   useEffect(() => {
-    if (!supported) return
+    if (!browserCan) return
     const choose = () => {
       voice.current = pickVoice(window.speechSynthesis.getVoices())
     }
@@ -330,21 +561,11 @@ export function useSpeaker() {
       window.speechSynthesis.removeEventListener('voiceschanged', choose)
       window.speechSynthesis.cancel()
     }
-  }, [supported])
+  }, [browserCan])
 
-  const stop = useCallback(() => {
-    pending.current = 0
-    if (supported) window.speechSynthesis.cancel()
-    setSpeaking(false)
-    setCaption(null)
-  }, [supported])
-
-  const say = useCallback(
+  const browserSay = useCallback(
     (sentence: string) => {
-      if (!supported || !sentence.trim()) return
-      if (settings.current.muted) {
-        // Silent, but still captioned: a reader with the sound off gets the
-        // same line at the bottom of the screen.
+      if (!browserCan) {
         setCaption({ text: sentence, said: sentence.length })
         return
       }
@@ -374,11 +595,169 @@ export function useSpeaker() {
       pending.current += 1
       window.speechSynthesis.speak(utterance)
     },
-    [supported],
+    [browserCan],
+  )
+
+  // ── Polly, through Web Audio ─────────────────────────────────────────────
+  const queue = useRef<Queued[]>([])
+  const generation = useRef(0)
+  const pumping = useRef(false)
+  const playing = useRef<Playing | null>(null)
+  const output = useRef<{ gain: GainNode; analyser: AnalyserNode } | null>(null)
+  /** This answer fell back to the browser's voice: finish it in that voice. */
+  const degraded = useRef(false)
+
+  const outputFor = useCallback((context: AudioContext) => {
+    if (!output.current) {
+      const gain = context.createGain()
+      const analyser = context.createAnalyser()
+      analyser.fftSize = 1024
+      analyser.smoothingTimeConstant = 0.72
+      gain.connect(analyser).connect(context.destination)
+      output.current = { gain, analyser }
+    }
+    return output.current
+  }, [])
+
+  const play = useCallback(
+    (context: AudioContext, buffer: AudioBuffer, text: string, gen: number) =>
+      new Promise<void>((resolve) => {
+        const { gain, analyser } = outputFor(context)
+        gain.gain.value = settings.current.volume
+        const source = context.createBufferSource()
+        source.buffer = buffer
+        source.connect(gain)
+        audioSessionFor('playback')
+        const started = context.currentTime
+        const timer = window.setInterval(() => {
+          const progress = Math.min(1, (context.currentTime - started) / Math.max(0.1, buffer.duration))
+          if (gen === generation.current) setCaption({ text, said: wordEnd(text, Math.round(progress * text.length)) })
+        }, 90)
+        source.onended = () => {
+          window.clearInterval(timer)
+          if (playing.current?.source === source) playing.current = null
+          detachAnalyser(analyser)
+          if (gen === generation.current) setCaption({ text, said: text.length })
+          resolve()
+        }
+        playing.current = { source, timer }
+        setSpeaking(true)
+        setCaption({ text, said: 0 })
+        attachAnalyser(analyser)
+        source.start()
+      }),
+    [outputFor],
+  )
+
+  /** Everything still queued, in the browser's voice instead. */
+  const fallBack = useCallback(
+    (from: Queued[]) => {
+      degraded.current = true
+      for (const item of from) {
+        item.abort.abort()
+        browserSay(item.text)
+      }
+    },
+    [browserSay],
+  )
+
+  const pump = useCallback(
+    async (gen: number) => {
+      pumping.current = true
+      try {
+        while (gen === generation.current && queue.current.length) {
+          const item = queue.current[0]!
+          const context = playbackContext()
+          let buffer: AudioBuffer
+          try {
+            if (!context) throw new Error('No Web Audio.')
+            buffer = await item.audio
+            if (context.state !== 'running') {
+              // Nobody has tapped the page yet, so the browser will not play.
+              await Promise.race([context.resume(), new Promise((r) => window.setTimeout(r, RESUME_WAIT_MS))])
+              // Read again: `resume()` changes it, which TypeScript cannot see.
+              if ((context.state as AudioContextState) !== 'running') throw new Error('Audio is not allowed to start yet.')
+            }
+          } catch (error) {
+            if (gen !== generation.current) return
+            const status = (error as { status?: number }).status
+            console.info('Polly voice unavailable:', status ?? (error as Error).message)
+            // Refused, not just lost on the way: stop asking for this page.
+            if (status === 401 || status === 429 || status === 503) setRefused(true)
+            fallBack(queue.current.splice(0))
+            return
+          }
+          if (gen !== generation.current) return
+          queue.current.shift()
+          await play(context, buffer, item.text, gen)
+        }
+      } finally {
+        if (gen === generation.current) {
+          pumping.current = false
+          if (!queue.current.length && pending.current === 0) setSpeaking(false)
+        }
+      }
+    },
+    [fallBack, play],
+  )
+
+  const halt = useCallback(() => {
+    generation.current += 1
+    pumping.current = false
+    degraded.current = false
+    for (const item of queue.current.splice(0)) item.abort.abort()
+    const current = playing.current
+    if (current) {
+      playing.current = null
+      window.clearInterval(current.timer)
+      try {
+        current.source.stop()
+      } catch {
+        // Already stopped.
+      }
+    }
+    if (output.current) detachAnalyser(output.current.analyser)
+    pending.current = 0
+    if (browserCan) window.speechSynthesis.cancel()
+    setSpeaking(false)
+  }, [browserCan])
+
+  useEffect(() => () => halt(), [halt])
+
+  const stop = useCallback(() => {
+    halt()
+    setCaption(null)
+  }, [halt])
+
+  const say = useCallback(
+    (sentence: string) => {
+      if (!supported || !sentence.trim()) return
+      if (settings.current.muted) {
+        // Silent, but still captioned: a reader with the sound off gets the
+        // same line at the bottom of the screen.
+        setCaption({ text: sentence, said: sentence.length })
+        return
+      }
+      const server = voiceRemote.current
+      const context = viaPolly.current && !degraded.current && server ? playbackContext() : null
+      if (!server || !context) {
+        browserSay(sentence)
+        return
+      }
+      const abort = new AbortController()
+      // Fetched now, played in turn: the next sentence is ready as this one ends.
+      const audio = server.fetch(sentence, abort.signal).then((bytes) => context.decodeAudioData(bytes))
+      audio.catch(() => {}) // settled in `pump`, in order
+      queue.current.push({ text: sentence, audio, abort })
+      if (!pumping.current) void pump(generation.current)
+    },
+    [supported, browserSay, pump],
   )
 
   return {
     supported,
+    /** Whose voice: Amazon Polly, or the browser's own synthesiser. */
+    engine: pollySpeaks ? ('polly' as const) : browserCan ? ('browser' as const) : null,
     speaking,
     caption,
     muted,
@@ -386,24 +765,25 @@ export function useSpeaker() {
     say,
     stop,
     clearCaption: useCallback(() => setCaption(null), []),
-    setMuted: useCallback((value: boolean) => {
-      setMuted(value)
-      if (value && supported) {
-        pending.current = 0
-        window.speechSynthesis.cancel()
-        setSpeaking(false)
-      }
-    }, [supported]),
+    setMuted: useCallback(
+      (value: boolean) => {
+        setMuted(value)
+        if (value) halt()
+      },
+      [halt],
+    ),
     /**
      * The device's volume buttons: a step of a tenth, never quite silent,
      * with a click at the new level. Pressing one unmutes the voice, as the
-     * hardware's do. Speech synthesis fixes an utterance's volume when it
-     * starts, so the change is heard from the next sentence.
+     * hardware's do. Polly's voice changes at once; the browser's own fixes
+     * an utterance's volume when it starts, so it is heard from the next one.
      */
     nudgeVolume: useCallback((step: number) => {
       const next = Math.min(1, Math.max(0.1, Math.round((settings.current.volume + step) * 10) / 10))
       setVolume(next)
       setMuted(false)
+      const gain = output.current?.gain
+      if (gain) gain.gain.setTargetAtTime(next, gain.context.currentTime, 0.03)
       volumeTick(next)
     }, []),
   }

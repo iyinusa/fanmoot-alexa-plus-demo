@@ -15,11 +15,10 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import pytest
 from fastapi.testclient import TestClient
 
-from app.agent.demo_fan import DemoFan
 from app.agent.oauth import DemoOAuthClient
 from app.main import create_app
 from app.settings import Settings
-from tests.fake_as import EMAIL, PASSWORD, FakeAuthorizationServer
+from tests.fake_as import FakeAuthorizationServer
 from tests.fake_mcp import RunningServer
 from tests.test_ws import until
 
@@ -33,11 +32,10 @@ def server() -> FakeAuthorizationServer:
 def app_client(
     configure: Callable[..., Settings], mcp_server: RunningServer, server: FakeAuthorizationServer
 ) -> Iterator[TestClient]:
-    settings = configure(mcp_url=mcp_server.url, demo_fan_email=EMAIL, demo_fan_password=PASSWORD)
+    settings = configure(mcp_url=mcp_server.url)
     with TestClient(create_app()) as test_client:
         registry = test_client.app.state.registry  # type: ignore[attr-defined]
         registry.oauth = DemoOAuthClient(settings, transport=server.transport)
-        registry.demo_fan = DemoFan(settings, registry.oauth)
         yield test_client
 
 
@@ -90,20 +88,6 @@ def test_an_unknown_ticket_or_state_goes_nowhere(app_client: TestClient) -> None
     for response in (start, back):
         assert response.status_code == 303
         assert parse_qs(urlsplit(response.headers["location"]).query)["status"] == ["error"]
-
-
-def test_a_visitor_can_use_the_demo_account(app_client: TestClient) -> None:
-    with app_client.websocket_connect("/ws") as socket:
-        assert until(socket, "session")["demo_fan"]["available"] is True
-        socket.send_json({"type": "auth.demo"})
-        auth = until(socket, "auth")
-        socket.send_json({"type": "auth.sign_out"})
-        after = until(socket, "auth")
-
-    assert auth["mode"] == "demo"
-    assert auth["label"] == "Demo fan account"
-    assert auth["handle"] == "demo_fan"
-    assert after["mode"] == "none"
 
 
 def test_the_client_metadata_document(app_client: TestClient) -> None:

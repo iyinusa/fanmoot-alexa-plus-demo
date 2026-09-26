@@ -156,7 +156,6 @@ def run(base: str) -> int:
         f"the chain starts with {chain[0]['model'] if chain else 'nothing'}",
         warn=True,
     )
-    check(bool(body.get("demo_fan")), "the demo fan account is configured", warn=True)
 
     print("page")
     page = http.get("/")

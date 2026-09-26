@@ -6,8 +6,12 @@
  * - **The microphone**, while the fan is talking: an `AnalyserNode` on the
  *   real input, so the bars are the fan's own voice — its loudness and its
  *   spectrum, bucketed into bands across the range speech lives in.
- * - **Pulses**, while Alexa is talking. Speech synthesis plays through the
- *   browser, not through Web Audio, so there is no signal to analyse. What
+ * - **Alexa's own voice**, while she talks with Amazon Polly: the answer is
+ *   played through Web Audio (lib/speech.ts), and an analyser on its output
+ *   draws it exactly as the mic's draws the fan.
+ * - **Pulses**, while the browser's own synthesiser talks, where Polly is not
+ *   available. That plays through the browser, not through Web Audio, so
+ *   there is no signal to analyse. What
  *   there is, is a `boundary` event at every word the synthesiser reaches.
  *   Each one is a pulse, the envelope decays between them, and the bars move
  *   with the words actually being spoken rather than with a loop.
@@ -25,6 +29,11 @@ let lastAt = 0
 export function attachAnalyser(node: AnalyserNode | null) {
   analyser = node
   bins = node ? new Uint8Array(node.frequencyBinCount) : null
+}
+
+/** Stop drawing `node`, if it is still the one being drawn. */
+export function detachAnalyser(node: AnalyserNode) {
+  if (analyser === node) attachAnalyser(null)
 }
 
 /** A word was said (or heard). `strength` 0–1. */

@@ -1,15 +1,16 @@
 """Application factory.
 
 One process, one origin, one Traefik route (HAD-10): the built SPA, the
-``/ws`` channel it talks over, the OAuth popup's routes, the ``/sandbox`` the
+``/ws`` channel it talks over, the OAuth popup's routes, Alexa's voice
+(``/api/speech``), the ``/sandbox`` the
 server's views render in, ``/healthz`` and the operator's ``/api/admin``.
 ``fanmoot``'s AD-1 shape, so there is no CORS to configure and no second
 service to deploy.
 
 *Why a backend at all:* ADK is Python, the Bedrock credentials must never reach
 a browser, and the MCP session — including a fan's OAuth grant — has to be held
-server-side. The lifespan builds the three things every visitor shares: the
-OAuth client, the demo fan and the session registry.
+server-side. The lifespan builds the two things every visitor shares: the
+OAuth client and the session registry.
 """
 
 from __future__ import annotations
@@ -22,12 +23,12 @@ from fastapi import FastAPI
 
 from app import __version__, admin, health, oauth_routes, sandbox, spa, ws
 from app.agent import models
-from app.agent.demo_fan import DemoFan
 from app.agent.oauth import DemoOAuthClient
 from app.logging_config import configure_logging, get_logger
 from app.middleware import RequestIdMiddleware, SecurityHeadersMiddleware
 from app.session import SessionRegistry
 from app.settings import Settings, get_settings
+from app.voice import routes as voice_routes
 
 
 @asynccontextmanager
@@ -35,7 +36,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings.env)
     oauth = DemoOAuthClient(settings)
-    registry = SessionRegistry(settings, oauth=oauth, demo_fan=DemoFan(settings, oauth))
+    registry = SessionRegistry(settings, oauth=oauth)
     app.state.registry = registry
     registry.start_sweeper()
     # Production only: a test or a laptop does not need a thread importing
@@ -52,8 +53,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         base_url=settings.public_base_url,
         mcp_url=settings.mcp_url,
         model_chain=settings.model_chain,
-        demo_fan=settings.demo_fan_configured,
         oauth_client_mode=settings.oauth_client_mode,
+        voice=f"{settings.voice_id} ({settings.voice_engine})" if settings.voice_enabled else "off",
         # Said out loud because an image built without it serves no demo.
         spa_built=spa.is_built(),
     )
@@ -89,6 +90,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(ws.router)
     app.include_router(oauth_routes.router)
+    app.include_router(voice_routes.router)
     app.include_router(admin.router)
     app.include_router(sandbox.router)
     # Last: the catch-all answers only what nothing above claimed.

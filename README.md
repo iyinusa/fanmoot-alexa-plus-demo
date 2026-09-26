@@ -57,11 +57,14 @@ flowchart LR
         Client["MCP client<br/>one session per visitor"]
         OAuthC["OAuth client<br/>PKCE S256 · SEP-991"]
         Sandbox["/sandbox<br/>MCP Apps host"]
+        Voice["/api/speech · listen relay"]
     end
 
-    subgraph AWS["Amazon Bedrock · us-east-1"]
-        Nova["Amazon Nova Pro"]
-        Claude["Claude Sonnet 4.6"]
+    subgraph AWS["AWS · us-east-1"]
+        Nova["Amazon Nova Pro<br/>(Bedrock)"]
+        Claude["Claude Sonnet 4.6<br/>(Bedrock)"]
+        Polly["Amazon Polly<br/>Alexa's voice"]
+        Transcribe["Amazon Transcribe<br/>Alexa's ears"]
     end
     Gemini["Gemini<br/>(fallback)"]
 
@@ -73,6 +76,9 @@ flowchart LR
 
     UI <--> WS
     Trace <--> WS
+    UI -- "sentences · mic audio" --> Voice
+    Voice --> Polly
+    Voice --> Transcribe
     UI -. "ui:// views" .-> Sandbox
     WS --> Agent
     Agent --> Chain
@@ -119,11 +125,19 @@ redacted, onto the trace the visitor sees.
   built from the resource's declared domains applies. The thread card's reply
   box calls `reply_to_moot` through the host bridge, on the visitor's own MCP
   session and grant.
-- **Voice, from the browser.** Speech in uses the Web Speech API, with a typed
-  field for browsers without it. Answers are spoken sentence by sentence as
-  they stream, with a captions track that follows the synthesiser's word
-  boundaries. The waveform shows the microphone's real spectrum while
-  listening.
+- **Alexa's voice is Amazon Polly; her ears are Amazon Transcribe.** Answers
+  are spoken sentence by sentence as they stream, in Polly's generative
+  British voice (Amy), each sentence fetched from `/api/speech` while the one
+  before it plays. The fan's voice is recorded with an AudioWorklet — which
+  Chrome, Edge, Firefox, Safari and Brave all have — and streamed as 16 kHz PCM
+  up `/ws`; the server relays it to Transcribe's streaming API over a
+  WebSocket it signs itself (SigV4), and the words come back as they are
+  heard. The browser decides when the fan has stopped, from the audio's level
+  and from the words settling. Nothing is installed in the browser and no key
+  reaches it. Where AWS says no (no permission, a ceiling reached), the
+  browser's own Web Speech API takes over, and the typed field is always
+  there. The waveform draws the real spectrum of whoever is talking, and the
+  captions follow the audio's own clock.
 - **The trace inspector.** The column beside the device (a sheet on a phone)
   opens with five facts, each read from the live session: the protocol
   version `initialize` negotiated, the transport and its `Mcp-Session-Id`, the
@@ -237,13 +251,16 @@ set:
 | `FMD_AWS_REGION` | `us-east-1` | Bedrock region. Enable each model in the Bedrock console for it |
 | `FMD_AWS_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` | *(empty)* | Bedrock keys. Empty means the standard AWS credential chain |
 | `FMD_GEMINI_API_KEY` | *(empty)* | Google AI Studio key. Empty skips the Gemini rung |
-| `FMD_PROVIDER_DAILY_CAP_USD` | `{"bedrock": 30, "gemini": 10}` | Daily spend ceiling per provider. Over it, the chain skips that provider. `{}` turns it off |
+| `FMD_PROVIDER_DAILY_CAP_USD` | `{"bedrock": 30, "gemini": 10, "polly": 4, "transcribe": 4}` | Daily spend ceiling per provider. Over it, the chain skips that provider, and Polly or Transcribe hand voice back to the browser. `{}` turns it off |
 | `FMD_DAILY_CAP_USD` | `40` | Daily spend ceiling for the whole demo. Over it, turns are refused until 00:00 UTC |
 | `FMD_DAILY_TURN_CAP` | `2000` | Turns per UTC day, whatever they cost |
 | `FMD_ADDRESS_TURNS_PER_HOUR` | `60` | Turns one client address may start in any hour, across reloads |
 | `FMD_SESSION_TURN_CAP` | `40` | Turns one session may take |
 | `FMD_OAUTH_CLIENT_MODE` | `auto` | How the demo identifies itself to the authorization server. See below |
-| `FMD_DEMO_FAN_EMAIL` / `_PASSWORD` | *(empty)* | A real Fanmoot account visitors may post as. Empty hides the option |
+| `FMD_VOICE_ENABLED` | `true` | Speak with Amazon Polly and listen with Amazon Transcribe. `false` leaves voice to each browser's Web Speech API |
+| `FMD_VOICE_ID` / `_ENGINE` | `Amy` / `generative` | The Polly voice. A voice or region without the generative engine falls back to `neural` by itself |
+| `FMD_VOICE_CHARS_PER_SESSION` | `15000` | Characters Polly may speak for one session, about 40 answers |
+| `FMD_LISTEN_SECONDS_PER_SESSION` | `600` | Seconds of the fan's voice Transcribe may hear in one session |
 | `FMD_ADMIN_TOKEN` | *(empty)* | Bearer token for `/api/admin/models`. Empty disables it |
 | `FMD_AMBIENT_INTERVAL_S` | `30` | Seconds between the ticker's `live_scores` calls. `0` turns the ticker off |
 | `FMD_GUIDE_TTL_S` | `300` | Seconds the guided scenarios' reading of what is on is kept. `0` uses fixed phrases |
@@ -262,14 +279,12 @@ With `FMD_OAUTH_CLIENT_MODE=auto`:
   once per process.
 - With `FMD_OAUTH_CLIENT_ID` set, it uses that **static client**.
 
-### The demo fan account
+### Accounts
 
-For visitors who do not want to sign up, the demo can act as one shared, real
-Fanmoot account. It is labelled as the demo account on screen and to the model.
-The demo links it through the same OAuth flow a visitor uses, at first use, and
-re-links it if the grant is lost. Its writes are limited per session
-(`FMD_DEMO_FAN_WRITES_PER_SESSION`) and per hour across all visitors
-(`FMD_DEMO_FAN_WRITES_PER_HOUR`).
+There is no shared demo account. Reading needs no account at all. To post, a
+visitor signs in to Fanmoot, or creates an account on the spot, on
+Fanmoot's own page in a popup, and everything they post goes out under their
+own handle.
 
 ## Endpoints
 
@@ -280,6 +295,7 @@ re-links it if the grant is lost. Its writes are limited per session
 | `/oauth/start` | Opened by the sign-in popup. Starts a PKCE authorization and redirects to the MCP server's `/authorize` |
 | `/oauth/callback` | Where the fan returns. The code is redeemed here, server-side |
 | `/oauth/client-metadata.json` | This demo's OAuth client metadata (SEP-991) |
+| `/api/speech` | `POST` one sentence, get it back as MP3 from Amazon Polly. Only a live session may ask, identified by its id and resume token |
 | `/linked` | The popup's last page. Tells the opener and closes |
 | `/sandbox` | The MCP Apps sandbox proxy the server's `ui://` views run in. Only this origin may frame it |
 | `/api/admin/models` | The model chain, today's spend and turns against the ceilings, and memory. Needs `FMD_ADMIN_TOKEN` |
@@ -337,6 +353,11 @@ degrades the demo rather than stopping it.
 - **Switchable on numbers, live.** `PUT /api/admin/models` reorders the chain
   from the next turn, with no redeploy. "Bedrock got expensive, switch to
   Gemini" becomes a decision taken from that day's figures.
+- **Polly and Transcribe are the voice.** Every spoken answer is Amazon Polly
+  (generative engine, neural behind it), and every spoken question is heard
+  by Amazon Transcribe streaming. Both are priced into the same ledger
+  (`polly`, `transcribe`) and capped per day and per session like the models
+  (`app/voice/`).
 - **The MCP server uses Bedrock too.** `match_mood` on `mcp.fanmoot.com`
   reads the mood of a match thread with Amazon Nova Lite, cached per thread.
 

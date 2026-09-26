@@ -15,7 +15,7 @@
  * each finished answer, and the cards and trace loaded off the first paint.
  */
 import { AnimatePresence, m } from 'framer-motion'
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Captions } from '@/conversation/Captions'
 import { Composer } from '@/conversation/Composer'
@@ -58,7 +58,13 @@ export function AlexaShell() {
   const demo = useDemoSession()
   const panel = useTracePanel()
   const theme = useTheme()
-  const speaker = useSpeaker()
+  // Alexa's voice and ears are Amazon Polly and Amazon Transcribe when the
+  // session has them (app/voice), and the browser's own otherwise.
+  const speakWithPolly = demo.session?.voice?.speak ?? false
+  const listenWithTranscribe = demo.session?.voice?.listen ?? false
+  const voice = useMemo(() => ({ available: speakWithPolly, fetch: demo.speech }), [speakWithPolly, demo.speech])
+  const ears = useMemo(() => ({ available: listenWithTranscribe, ...demo.ears }), [listenWithTranscribe, demo.ears])
+  const speaker = useSpeaker(voice)
   const [captions, setCaptions] = useState(true)
   const [micMuted, setMicMuted] = useState(false)
   const [expanded, setExpanded] = useState(false)
@@ -82,7 +88,7 @@ export function AlexaShell() {
     },
     [demo.ask, speaker.stop],
   )
-  const listener = useListener(ask)
+  const listener = useListener(ask, ears)
   const scenarios = demo.scenarios?.list ?? []
   const guide = useGuide({
     scenarios,
@@ -327,9 +333,7 @@ export function AlexaShell() {
                 status={demo.status}
                 auth={demo.auth}
                 ambient={demo.ambient}
-                demoAvailable={demo.session?.demo_fan.available ?? false}
                 signIn={demo.signIn}
-                useDemo={demo.useDemoAccount}
                 signOut={demo.signOut}
                 showTicker={hasTurns}
               />
@@ -389,7 +393,7 @@ export function AlexaShell() {
                   ) : (
                     <m.div
                       key="conversation"
-                      className={`absolute inset-0 overflow-y-auto @3xl:grid @3xl:gap-6 @3xl:overflow-hidden @3xl:px-5 ${
+                      className={`fm-screen-scroll absolute inset-0 overflow-y-auto @3xl:grid @3xl:gap-6 @3xl:overflow-hidden @3xl:px-5 ${
                         hasCards && !expanded ? '@3xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]' : '@3xl:grid-cols-1'
                       }`}
                       initial={{ opacity: 0 }}
@@ -399,7 +403,7 @@ export function AlexaShell() {
                     >
                       {!expanded && (
                         <div
-                          className={`px-4 pb-24 pt-2 @3xl:h-full @3xl:overflow-y-auto @3xl:px-1 ${hasCards ? '' : 'mx-auto w-full max-w-3xl'}`}
+                          className={`fm-screen-scroll px-4 pb-24 pt-2 @3xl:h-full @3xl:overflow-y-auto @3xl:px-1 ${hasCards ? '' : 'mx-auto w-full max-w-3xl'}`}
                         >
                           <Turns turns={demo.turns} />
                           <button
@@ -412,7 +416,7 @@ export function AlexaShell() {
                         </div>
                       )}
                       {hasCards && (
-                        <div className={`px-4 pb-24 pt-2 @3xl:px-1 ${expanded ? 'h-full' : '@3xl:h-full @3xl:overflow-y-auto'}`}>
+                        <div className={`fm-screen-scroll px-4 pb-24 pt-2 @3xl:px-1 ${expanded ? 'h-full' : '@3xl:h-full @3xl:overflow-y-auto'}`}>
                           <Suspense fallback={<div className="h-64 animate-pulse rounded-fm-lg border border-line bg-surface/60" />}>
                           <CardStack
                             cards={demo.cards}
@@ -467,7 +471,6 @@ export function AlexaShell() {
                       required={demo.authRequired}
                       auth={demo.auth}
                       signIn={demo.signIn}
-                      useDemo={demo.useDemoAccount}
                       dismiss={demo.dismiss}
                       signup={guide.tour?.scenario.signup ?? false}
                     />

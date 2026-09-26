@@ -28,12 +28,14 @@ os.environ.setdefault("FMD_MCP_URL", "https://mcp.fanmoot.test/mcp")
 os.environ.setdefault("FMD_MODEL_CHAIN", "scripted/primary")
 os.environ.setdefault("FMD_GEMINI_API_KEY", "")
 os.environ.setdefault("FMD_ADMIN_TOKEN", "")
-os.environ.setdefault("FMD_DEMO_FAN_EMAIL", "")
 # The corner ticker (W2-7) calls `live_scores` on its own schedule, which would
 # interleave with the calls a test asserts. The tests that are about it turn it on.
 os.environ.setdefault("FMD_AMBIENT_INTERVAL_S", "0")
 # The guided scenarios (W4) read what is on the same way, once per session.
 os.environ.setdefault("FMD_GUIDE_TTL_S", "0")
+# Polly and Transcribe are never called for real: tests/test_voice.py turns
+# the voice on with fakes where it wants it.
+os.environ.setdefault("FMD_VOICE_ENABLED", "false")
 
 import pytest
 from fastapi.testclient import TestClient

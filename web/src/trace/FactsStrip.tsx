@@ -39,7 +39,7 @@ export function readFacts(facts: Facts | null, auth: AuthState | null, lastModel
   const mcp = facts?.connected ? facts.mcp : null
   const advertised = facts?.oauth?.pkce ?? null
   const held = auth?.method ?? null
-  const who = auth?.mode === 'demo' ? (auth.label ?? 'demo fan') : auth?.handle ? `@${auth.handle}` : 'a fan'
+  const who = auth?.handle ? `@${auth.handle}` : 'a fan'
 
   return [
     {

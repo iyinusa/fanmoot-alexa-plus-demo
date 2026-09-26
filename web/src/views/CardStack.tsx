@@ -85,7 +85,7 @@ export function CardStack({
           role="tablist"
           aria-label="Cards in this conversation"
           onKeyDown={onTabKeys}
-          className="mb-2 flex gap-1.5 overflow-x-auto pb-1"
+          className="fm-screen-scroll mb-2 flex gap-1.5 overflow-x-auto pb-1"
         >
           {shown.map((card) => (
             <button
@@ -150,7 +150,7 @@ export function CardStack({
                 }
                 style={{ transformPerspective: 900 }}
               >
-                <div className={mode === 'fullscreen' ? 'min-h-0 flex-1 overflow-auto' : ''}>
+                <div className={mode === 'fullscreen' ? 'fm-screen-scroll min-h-0 flex-1 overflow-auto' : ''}>
                   <ViewFrame
                     card={card}
                     resource={resource}

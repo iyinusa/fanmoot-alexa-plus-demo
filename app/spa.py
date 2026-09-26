@@ -47,7 +47,7 @@ _NEVER_SPA = ("/api/", "/ws", "/healthz", "/.well-known/", "/oauth/")
 
 #: Directories of real files in the bundle. Missing under one of these is a
 #: wrong URL, never an app route.
-_ASSET_DIRS = ("/assets/", "/fonts/", "/icons/", "/share/")
+_ASSET_DIRS = ("/assets/", "/audio/", "/fonts/", "/icons/", "/share/")
 
 #: python:3.12-slim ships without a mime.types database, so these resolve to
 #: nothing there and would go out as application/octet-stream — a font some

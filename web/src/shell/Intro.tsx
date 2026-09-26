@@ -129,7 +129,7 @@ export function Intro({
       animate={{ opacity: 1 }}
       exit={{ opacity: 0, scale: 0.985, transition: { duration: 0.3, ease: EASE } }}
       transition={{ duration: 0.2 }}
-      className="fm-scroll absolute inset-0 z-20 overflow-y-auto bg-[var(--fm-bg)]/90 backdrop-blur-md"
+      className="fm-screen-scroll absolute inset-0 z-20 overflow-y-auto bg-[var(--fm-bg)]/90 backdrop-blur-md"
     >
       <button
         type="button"

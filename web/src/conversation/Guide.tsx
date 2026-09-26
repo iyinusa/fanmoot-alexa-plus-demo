@@ -61,7 +61,7 @@ function Chips({ scenarios, live, running, start }: Props) {
   return (
     // One row that scrolls sideways on a phone, so the chips never cost the
     // screen its height (W2-8).
-    <div className="-mx-4 flex items-center gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] md:mx-0 md:flex-wrap md:overflow-visible md:px-0 md:pb-0">
+    <div className="-mx-4 flex items-center gap-2 fm-screen-scroll overflow-x-auto px-4 pb-1 md:mx-0 md:flex-wrap md:overflow-visible md:px-0 md:pb-0">
       <span
         className="shrink-0 text-xs text-faint"
         title={live ? 'Written from what is on Fanmoot right now' : 'Example phrases — what is on could not be read just now'}

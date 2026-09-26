@@ -159,12 +159,8 @@ export function decide(tour: Tour, turn: Turn): Tour {
   const refused = goal.at(-1)
   if (refused?.status === 'error') {
     if (refused.reason === 'auth_required') return { ...tour, phase: 'signin', offer: null }
-    if (refused.reason !== 'demo_limit') {
-      // Refused for a reason the fan can fix and then ask again.
-      return { ...tour, phase: 'ready', offer: scenario.retry_refused ?? repeat }
-    }
-    // The demo account's allowance is spent: nothing to retry into.
-    return { ...tour, phase: 'done', offer: null }
+    // Refused for a reason the fan can fix and then ask again.
+    return { ...tour, phase: 'ready', offer: scenario.retry_refused ?? repeat }
   }
 
   const following = scenario.steps[tour.said] ?? null

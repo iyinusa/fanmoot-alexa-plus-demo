@@ -80,7 +80,9 @@ export function Waveform({
       const gap = Math.max(2, width / bars / 3)
       const barWidth = (width - gap * (bars - 1)) / bars
       const middle = height / 2
-      for (let i = 0; i < bars; i++) {
+      // A canvas laid out narrower than its gaps (collapsed, or mid-animation)
+      // has no room for a bar, and a negative radius throws.
+      for (let i = 0; barWidth > 0 && i < bars; i++) {
         // Rise quickly, fall gently: bars that snap down read as jitter.
         const target = levels[i] ?? 0
         const previous = shown[i] ?? 0

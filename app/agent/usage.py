@@ -10,6 +10,11 @@ models, with ``FMD_MODEL_PRICES`` for anything it does not. A model with no
 known price is recorded as **unknown**, never as free: an operator reading
 "$0.00" beside a model nobody priced would draw exactly the wrong conclusion.
 
+Alexa's voice and ears are counted here too (``app.voice``): ``polly`` and
+``transcribe`` rows, priced from AWS's lists, so they count against the same
+ceilings. Their ``tokens_in`` is what those services bill by instead —
+characters spoken, and seconds heard.
+
 In memory, per process, and deliberately so. The demo has no database, runs one
 worker (see the Dockerfile), and the ceilings exist to stop a judging-day spike
 emptying an account within a day — a restart resetting them is acceptable; a

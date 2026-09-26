@@ -56,7 +56,7 @@ Amazon.
 """
 
 
-def identity_line(mode: str, *, handle: str | None, label: str | None, scopes: list[str]) -> str:
+def identity_line(mode: str, *, handle: str | None, scopes: list[str]) -> str:
     """Who the fan is right now, in a sentence the model can act on."""
     who = f"@{handle}" if handle else "their account"
     if mode == "linked":
@@ -64,14 +64,6 @@ def identity_line(mode: str, *, handle: str | None, label: str | None, scopes: l
         return (
             f"The fan is signed in to Fanmoot as {who} (granted: {granted}). Posts go out "
             f"under {who}."
-        )
-    if mode == "demo":
-        name = label or "the demo account"
-        return (
-            f"The fan is using {name} ({who}), a shared account for trying the demo. Posts go "
-            f"out under {who}, not the fan's own name — say so when you read a post back. Its "
-            "posts are limited; if a tool says the limit is reached, suggest they sign in as "
-            "themselves."
         )
     # Not "sign in first": a model told that declines to call the tool at all,
     # and then Fanmoot never answers 401 — which is what puts the sign-in on

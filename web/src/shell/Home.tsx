@@ -41,7 +41,7 @@ export function Home({ ambient, canListen, lines }: { ambient: Ambient | null; c
   }, [])
 
   return (
-    <div className="flex h-full flex-col items-start justify-center gap-6 overflow-y-auto px-6 pb-10 pt-2 @3xl:flex-row @3xl:items-center @3xl:justify-between @3xl:gap-10 @3xl:px-12">
+    <div className="fm-screen-scroll flex h-full flex-col items-start justify-center gap-6 overflow-y-auto px-6 pb-10 pt-2 @3xl:flex-row @3xl:items-center @3xl:justify-between @3xl:gap-10 @3xl:px-12">
       <div className="min-w-0">
         <p className="text-sm text-muted">
           {greeting(now.getHours())} · {now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}

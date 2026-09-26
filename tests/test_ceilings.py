@@ -39,7 +39,12 @@ def test_a_deploy_that_sets_nothing_is_still_capped() -> None:
     settings = Settings(provider_daily_cap_usd="")
 
     assert settings.provider_daily_cap_usd == DEFAULT_PROVIDER_CAPS
-    assert settings.provider_caps == {"bedrock": 30.0, "gemini": 10.0}
+    assert settings.provider_caps == {
+        "bedrock": 30.0,
+        "gemini": 10.0,
+        "polly": 4.0,
+        "transcribe": 4.0,
+    }
     assert Settings().daily_cap_usd > 0
     assert Settings().daily_turn_cap > 0
     assert Settings().address_turns_per_hour > 0

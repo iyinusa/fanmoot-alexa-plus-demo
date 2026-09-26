@@ -17,6 +17,7 @@
 import { AnimatePresence, m } from 'framer-motion'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { useSignInAnswer } from '@/components/Linked'
 import { Captions } from '@/conversation/Captions'
 import { Composer } from '@/conversation/Composer'
 import { Guide } from '@/conversation/Guide'
@@ -58,6 +59,7 @@ export function AlexaShell() {
   const demo = useDemoSession()
   const panel = useTracePanel()
   const theme = useTheme()
+  useSignInAnswer()
   // Alexa's voice and ears are Amazon Polly and Amazon Transcribe when the
   // session has them (app/voice), and the browser's own otherwise.
   const speakWithPolly = demo.session?.voice?.speak ?? false

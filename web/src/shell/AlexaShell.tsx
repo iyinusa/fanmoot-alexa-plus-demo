@@ -277,6 +277,7 @@ export function AlexaShell() {
           <p className="truncate text-xs text-muted max-sm:hidden">Where fans debate football — now by voice.</p>
         </div>
         <span className="ml-auto flex items-center gap-2">
+          {demo.presence !== null && <Presence online={demo.presence} />}
           <button
             type="button"
             onClick={intro.show}
@@ -554,4 +555,24 @@ export function AlexaShell() {
 
 function capitalise(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+/** How many people have the demo open right now, beside the header's buttons. */
+function Presence({ online }: { online: number }) {
+  const label = `${online} ${online === 1 ? 'person' : 'people'} using the demo right now`
+  return (
+    <span
+      title={label}
+      className="inline-flex h-9 items-center gap-1.5 rounded-full border border-line px-3 text-xs text-muted"
+    >
+      <span className="sr-only">{label}</span>
+      <span className="relative flex size-2" aria-hidden="true">
+        <span className="absolute inset-0 animate-ping rounded-full bg-live opacity-60" />
+        <span className="relative size-2 rounded-full bg-live" />
+      </span>
+      <span className="font-bold tabular-nums text-ink" aria-hidden="true">
+        {online}
+      </span>
+    </span>
+  )
 }

@@ -16,7 +16,7 @@ BRAND_FILES := src/styles/tokens.css src/styles/fonts.css \
 	public/fonts/lato-700.woff2 public/fonts/lato-900.woff2 public/theme.js
 
 .DEFAULT_GOAL := help
-.PHONY: help install web-install dev dev-web test test-live evidence lint fmt types typecheck-web check build-web bundle-budget share-image brand-check brand-sync build up down logs shell clean
+.PHONY: help install web-install dev dev-web test test-live evidence turn-cost smoke load-check screenshots lint fmt types typecheck-web check build-web bundle-budget share-image brand-check brand-sync build up down logs shell clean
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -45,6 +45,20 @@ test-live:  ## W1-9 against the deployed MCP server (FMD_LIVE_MODEL=1 adds a rea
 CHAIN ?=
 evidence:  ## W1-10: a Bedrock-only run of the standing scenario, kept in evidence/
 	$(PY) scripts/capture_evidence.py $(if $(CHAIN),--chain $(CHAIN),)
+
+turn-cost:  ## W6-3: measure a turn's tokens with a real model and price them for the chain
+	$(PY) scripts/turn_cost.py $(if $(CHAIN),--chain $(CHAIN),) 2>/dev/null
+
+# The deployment to check. `make smoke URL=http://localhost:8090` for `make dev`.
+URL ?= https://alexaplus.fanmoot.com
+smoke:  ## W6-1: check a deployment from outside — TLS, health, page, OAuth client, /ws, cost guard
+	$(PY) scripts/smoke.py $(URL)
+
+load-check:  ## W6-2: 20 visitors holding MCP sessions at once (ARGS="--turns 1" spends model money)
+	$(PY) scripts/load_check.py --url $(if $(filter command line,$(origin URL)),$(URL),http://localhost:8090) $(ARGS)
+
+screenshots:  ## W6-4: retake docs/screenshots/ with headless Chrome (asks one real question)
+	$(PY) scripts/screenshots.py $(URL)
 
 lint:  ## Check style and import order
 	$(VENV)/bin/ruff check .

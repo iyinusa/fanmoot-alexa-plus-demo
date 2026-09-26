@@ -8,14 +8,27 @@ by calling the real [Fanmoot MCP server](https://mcp.fanmoot.com/mcp). A trace
 beside the conversation shows every MCP frame, OAuth request and model call as
 it happens.
 
-> **Status: polished (W5), deployment (W6) next.** A real ADK agent, Bedrock
-> first, drives a real MCP session against `mcp.fanmoot.com` and signs fans in
-> through a real OAuth 2.1 flow. The browser shows it as a smart display: voice
-> in and out, captions, the server's own cards, and live scores in the corner.
-> Beside it, the trace inspector shows every frame of that session. Guided
-> scenarios, written each day from what is actually on, walk a visitor through
-> it. Lighthouse scores 95 or more in every category on a throttled phone
-> (measured against a local production build; to re-check once deployed).
+> **Status: ready to deploy (W6).** A real ADK agent, Bedrock first, drives a
+> real MCP session against `mcp.fanmoot.com` and signs fans in through a real
+> OAuth 2.1 flow. Twenty visitors at once, each holding an MCP session, were
+> load-checked on the production build. A cost guard caps the worst day at $40.
+> Deployment steps are in [`docs/runbook.md`](docs/runbook.md).
+
+![The demo answering a question, with the card the MCP server returned and the MCP trace beside it](docs/screenshots/conversation.png)
+
+<table>
+<tr>
+<td width="62%"><img src="docs/screenshots/welcome.png" alt="The welcome screen: talk football with Alexa, with a live line to mcp.fanmoot.com at protocol 2025-11-25"></td>
+<td width="38%"><img src="docs/screenshots/phone.png" alt="The same conversation on a phone"></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/screenshots/trace.png" alt="The trace inspector with a tools/call row opened to its JSON-RPC response, with Copy as cURL"></td>
+</tr>
+</table>
+
+*Screenshots are taken by `make screenshots`, which asks the demo one real
+question in headless Chrome. These were taken against a local build answering
+with Gemini; the deployment answers with Amazon Nova Pro on Bedrock first.*
 
 ## Why a simulation
 
@@ -30,13 +43,52 @@ This project is not affiliated with, endorsed by or certified by Amazon.
 
 ## How it is built
 
-```text
-browser ──/ws──▶ FastAPI (this repo) ──Streamable HTTP──▶ mcp.fanmoot.com/mcp ──▶ fanmoot.com/v1
-                 ├ ADK agent, per turn         ▲
-                 │  Bedrock → Bedrock → Gemini │ OAuth 2.1 + PKCE S256
-                 ├ one MCP session per visitor ┘ (the sign-in popup)
-                 └ the trace: every frame, redacted
+```mermaid
+flowchart LR
+    subgraph Browser["Visitor's browser"]
+        UI["Alexa+ shell<br/>voice · captions · cards"]
+        Trace["MCP trace inspector"]
+    end
+
+    subgraph Demo["alexaplus.fanmoot.com · this repo · one FastAPI process"]
+        WS["/ws<br/>turns + trace frames"]
+        Agent["ADK agent<br/>tools from tools/list"]
+        Chain["Failover chain<br/>+ cost guard"]
+        Client["MCP client<br/>one session per visitor"]
+        OAuthC["OAuth client<br/>PKCE S256 · SEP-991"]
+        Sandbox["/sandbox<br/>MCP Apps host"]
+    end
+
+    subgraph AWS["Amazon Bedrock · us-east-1"]
+        Nova["Amazon Nova Pro"]
+        Claude["Claude Sonnet 4.6"]
+    end
+    Gemini["Gemini<br/>(fallback)"]
+
+    subgraph MCP["mcp.fanmoot.com · fanmoot-mcp"]
+        Server["MCP server<br/>2025-11-25 · Streamable HTTP"]
+        AS["OAuth 2.1<br/>authorization server"]
+    end
+    Fanmoot["fanmoot.com<br/>public API"]
+
+    UI <--> WS
+    Trace <--> WS
+    UI -. "ui:// views" .-> Sandbox
+    WS --> Agent
+    Agent --> Chain
+    Chain --> Nova
+    Chain -. "on failure" .-> Claude
+    Chain -. "on failure" .-> Gemini
+    Agent --> Client
+    Client -- "JSON-RPC over Streamable HTTP" --> Server
+    OAuthC -- "authorize · token" --> AS
+    UI -. "sign-in popup" .-> AS
+    Server --> Fanmoot
 ```
+
+The browser holds no credential: it speaks only `/ws`. Every model call, MCP
+request and OAuth request is made by this server, and each one is copied,
+redacted, onto the trace the visitor sees.
 
 - **The tools come from the server.** Each turn, the agent is given exactly
   the tools `tools/list` returned, with the server's own descriptions and JSON
@@ -135,6 +187,9 @@ the trace shows which models were skipped and why.
 For frontend work, run `make dev` and `make dev-web` side by side. Vite serves
 on `:5174` with hot reload and proxies `/ws`, `/oauth` and `/healthz` to `:8090`.
 
+Deploying to Dokploy, checking it and keeping its costs down are in
+[`docs/runbook.md`](docs/runbook.md).
+
 In Docker, the same stack Dokploy runs:
 
 ```bash
@@ -146,6 +201,10 @@ make up                 # http://localhost:8090
 | `make check` | Everything CI runs: ruff, `mypy --strict`, `tsc -b`, pytest |
 | `make test-live` | The multi-turn scenario against the deployed MCP server. Add `FMD_LIVE_MODEL=1` for a real-model run |
 | `make evidence` | A Bedrock-only run of that scenario, saved to `evidence/` |
+| `make turn-cost` | What a turn costs: a real-model run of that scenario, priced for every model in the chain |
+| `make smoke` | Check the deployment from outside: TLS, health, page, OAuth client, `/ws`, cost guard |
+| `make load-check` | Twenty visitors at once, each holding an MCP session, with latency and memory |
+| `make screenshots` | Retake `docs/screenshots/` with headless Chrome (asks one real question) |
 | `make build-web` | Build the SPA into `app/static/web`. Fails if the JavaScript is over budget |
 | `make bundle-budget` | Build, and print the gzipped JavaScript against its budget |
 | `make share-image` | Redraw the link-preview image, `web/public/share/og.png`, with headless Chrome |
@@ -178,7 +237,11 @@ set:
 | `FMD_AWS_REGION` | `us-east-1` | Bedrock region. Enable each model in the Bedrock console for it |
 | `FMD_AWS_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` | *(empty)* | Bedrock keys. Empty means the standard AWS credential chain |
 | `FMD_GEMINI_API_KEY` | *(empty)* | Google AI Studio key. Empty skips the Gemini rung |
-| `FMD_PROVIDER_DAILY_CAP_USD` | *(empty)* | Daily spend ceiling per provider, e.g. `{"bedrock": 25, "gemini": 5}` |
+| `FMD_PROVIDER_DAILY_CAP_USD` | `{"bedrock": 30, "gemini": 10}` | Daily spend ceiling per provider. Over it, the chain skips that provider. `{}` turns it off |
+| `FMD_DAILY_CAP_USD` | `40` | Daily spend ceiling for the whole demo. Over it, turns are refused until 00:00 UTC |
+| `FMD_DAILY_TURN_CAP` | `2000` | Turns per UTC day, whatever they cost |
+| `FMD_ADDRESS_TURNS_PER_HOUR` | `60` | Turns one client address may start in any hour, across reloads |
+| `FMD_SESSION_TURN_CAP` | `40` | Turns one session may take |
 | `FMD_OAUTH_CLIENT_MODE` | `auto` | How the demo identifies itself to the authorization server. See below |
 | `FMD_DEMO_FAN_EMAIL` / `_PASSWORD` | *(empty)* | A real Fanmoot account visitors may post as. Empty hides the option |
 | `FMD_ADMIN_TOKEN` | *(empty)* | Bearer token for `/api/admin/models`. Empty disables it |
@@ -219,7 +282,7 @@ re-links it if the grant is lost. Its writes are limited per session
 | `/oauth/client-metadata.json` | This demo's OAuth client metadata (SEP-991) |
 | `/linked` | The popup's last page. Tells the opener and closes |
 | `/sandbox` | The MCP Apps sandbox proxy the server's `ui://` views run in. Only this origin may frame it |
-| `/api/admin/models` | The model chain and today's spend. Needs `FMD_ADMIN_TOKEN` |
+| `/api/admin/models` | The model chain, today's spend and turns against the ceilings, and memory. Needs `FMD_ADMIN_TOKEN` |
 | `/healthz` | Always 200. Reports the build, the MCP server's reachability and protocol version, the model chain and whether the SPA is built |
 
 ## Operator API
@@ -241,14 +304,48 @@ curl -X PUT -H "Authorization: Bearer $FMD_ADMIN_TOKEN" -H "Content-Type: applic
 `DELETE` on the same URL goes back to `FMD_MODEL_CHAIN`. The override is held in
 memory, so a restart also goes back to it.
 
-## AWS Builder evidence
+## Built on AWS
 
-`make evidence` runs the standing five-turn scenario against the live MCP server
-with the model chain cut to Bedrock only. It writes the full frame transcript
-and a readable summary (the Bedrock model that answered each turn, tokens,
-estimated cost and tools called) to [`evidence/`](evidence/). It refuses to
-write anything if there are no AWS credentials or if any turn was answered by a
-model that is not on Bedrock.
+The demo's agent runs on **Amazon Bedrock** in `us-east-1`. The default
+model chain is **Amazon Nova Pro** first, then **Claude Sonnet 4.6 on
+Bedrock**, then Gemini as a peer from another provider, so a Bedrock outage
+degrades the demo rather than stopping it.
+
+- **Bedrock is called, not just named.** Every turn records the Bedrock model
+  id that answered. It is in the `turn.end` frame the browser receives, on the
+  trace's model card, in the `turn_complete` log line, and in each model-call
+  row with its tokens and estimated cost.
+- **Through ADK and LiteLLM.** Google's Agent Development Kit runs the agent
+  loop. LiteLLM is its Bedrock adapter, given the credentials directly rather
+  than through the process environment, and set to no retries, because
+  failover (`app/agent/models.py`) is this repository's job. A rung that
+  errors, throttles or times out passes the call to the next rung. The switch
+  is shown on the trace. A call that has already streamed words is never
+  retried, so a fan never hears an answer twice.
+- **Cross-region inference profiles** (`us.amazon.nova-pro-v1:0`,
+  `us.anthropic.claude-sonnet-4-6`), which is how Bedrock serves on-demand
+  calls for these models. The IAM policy the deployment uses allows
+  `InvokeModel` on those two alone ([runbook](docs/runbook.md#0-before-you-start)).
+- **Cost measured, then capped.** `make turn-cost` runs the standing
+  conversation with a real model and prices the tokens for each model in the
+  chain. On 2026-09-24 a turn was 11–17k tokens in, costing about **$0.011 on
+  Nova Pro** and $0.044 on Claude Sonnet. The ceilings are set from those
+  numbers: 40 turns a session, 60 an hour per address, $30 a day on Bedrock
+  and $40 a day in all, each checked before every model call. Today's spend
+  per provider is on `GET /api/admin/models`. Past a ceiling the device says
+  so in Alexa's voice, and it never shows an error.
+- **Switchable on numbers, live.** `PUT /api/admin/models` reorders the chain
+  from the next turn, with no redeploy. "Bedrock got expensive, switch to
+  Gemini" becomes a decision taken from that day's figures.
+- **The MCP server uses Bedrock too.** `match_mood` on `mcp.fanmoot.com`
+  reads the mood of a match thread with Amazon Nova Lite, cached per thread.
+
+**Standing evidence.** `make evidence` runs the five-turn matchday
+conversation against the live MCP server with the chain cut to Bedrock only.
+It writes the full frame transcript and a summary (the Bedrock model that
+answered each turn, its tokens, estimated cost and the tools it called) to
+[`evidence/`](evidence/). It refuses to write anything if any turn was
+answered by a model that is not on Bedrock.
 
 ## Licence
 

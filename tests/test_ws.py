@@ -190,6 +190,32 @@ def test_a_turn_over_the_socket(live_client: TestClient) -> None:
     assert end["model"] == "scripted/primary"
 
 
+def test_every_page_hears_how_many_are_online(client: TestClient) -> None:
+    with client.websocket_connect("/ws") as first:
+        assert until(first, "presence")["online"] == 1
+
+        with client.websocket_connect("/ws") as second:
+            assert until(second, "presence")["online"] == 2
+            assert until(first, "presence")["online"] == 2
+
+        # The second page closed: its session is kept for a resume, but
+        # nobody is looking at it.
+        assert until(first, "presence")["online"] == 1
+
+
+def test_a_resumed_page_is_told_the_count(client: TestClient) -> None:
+    with client.websocket_connect("/ws") as first:
+        hello = first.receive_json()
+
+    with client.websocket_connect("/ws") as second:
+        until(second, "presence")
+        second.send_json(
+            {"type": "resume", "session_id": hello["session_id"], "token": hello["resume_token"]}
+        )
+        # The fresh session gave way to the resumed one: still one page.
+        assert until(second, "presence")["online"] == 1
+
+
 def test_a_session_resumes_on_a_new_socket(client: TestClient) -> None:
     with client.websocket_connect("/ws") as first:
         hello = first.receive_json()

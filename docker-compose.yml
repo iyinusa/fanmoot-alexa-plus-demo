@@ -48,7 +48,11 @@ services:
       FMD_AWS_SESSION_TOKEN: ${FMD_AWS_SESSION_TOKEN:-}
       FMD_GEMINI_API_KEY: ${FMD_GEMINI_API_KEY:-}
       FMD_MODEL_PRICES: ${FMD_MODEL_PRICES:-}
+      # Empty means the defaults in app/settings.py; `{}` means none (W6-3).
       FMD_PROVIDER_DAILY_CAP_USD: ${FMD_PROVIDER_DAILY_CAP_USD:-}
+      FMD_DAILY_CAP_USD: ${FMD_DAILY_CAP_USD:-40}
+      FMD_DAILY_TURN_CAP: ${FMD_DAILY_TURN_CAP:-2000}
+      FMD_ADDRESS_TURNS_PER_HOUR: ${FMD_ADDRESS_TURNS_PER_HOUR:-60}
 
       # ── OAuth (W1-7) ────────────────────────────────────────────────────
       FMD_OAUTH_CLIENT_MODE: ${FMD_OAUTH_CLIENT_MODE:-auto}

@@ -100,6 +100,8 @@ type State = {
   /** Every card this conversation has shown, oldest first, the last few kept. */
   cards: ViewPayload[]
   ambient: Ambient | null
+  /** How many people have the demo open right now; null while not connected. */
+  presence: number | null
   /** The guided scenarios (W4), and whether they were written from live data. */
   scenarios: { live: boolean; list: Scenario[] } | null
   authRequired: AuthRequired | null
@@ -123,6 +125,7 @@ const INITIAL: State = {
   lastView: null,
   cards: [],
   ambient: null,
+  presence: null,
   scenarios: null,
   authRequired: null,
   error: null,
@@ -154,6 +157,8 @@ function reduce(state: State, action: Action): State {
       status: action.status,
       retryAt: action.retryAt ?? null,
       everOpen: state.everOpen || action.status === 'open',
+      // A count from a socket that has gone is a guess; the next one sends it afresh.
+      presence: action.status === 'open' ? state.presence : null,
     }
   }
   if (action.kind === 'rtt') return { ...state, rttMs: action.ms }
@@ -219,6 +224,8 @@ function reduce(state: State, action: Action): State {
       return { ...state, lastView: frame, cards: [...state.cards.slice(-(CARD_LIMIT - 1)), frame] }
     case 'ambient':
       return { ...state, ambient: frame }
+    case 'presence':
+      return { ...state, presence: frame.online }
     case 'scenarios':
       return { ...state, scenarios: { live: frame.live_data, list: frame.scenarios } }
     case 'view.call.result':

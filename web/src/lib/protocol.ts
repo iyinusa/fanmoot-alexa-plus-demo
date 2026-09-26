@@ -208,6 +208,8 @@ export type ServerFrame =
   | Facts
   | TurnEnd
   | { type: 'pong'; t: number | null }
+  /** How many pages have the demo open right now; sent when it changes. */
+  | { type: 'presence'; online: number }
   | { type: 'error'; code: string; message: string; turn_id?: string }
   | ({ type: 'auth'; reason: string | null } & AuthState)
   | {

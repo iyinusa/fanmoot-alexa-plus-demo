@@ -14,12 +14,14 @@ OAuth client, the demo fan and the session registry.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from app import __version__, admin, health, oauth_routes, sandbox, spa, ws
+from app.agent import models
 from app.agent.demo_fan import DemoFan
 from app.agent.oauth import DemoOAuthClient
 from app.logging_config import configure_logging, get_logger
@@ -36,6 +38,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     registry = SessionRegistry(settings, oauth=oauth, demo_fan=DemoFan(settings, oauth))
     app.state.registry = registry
     registry.start_sweeper()
+    # Production only: a test or a laptop does not need a thread importing
+    # LiteLLM behind it. The task is kept so it is not collected mid-run.
+    preloading = (
+        asyncio.create_task(asyncio.to_thread(models.preload, settings), name="model-preload")
+        if settings.is_production
+        else None
+    )
     get_logger("startup").info(
         "demo_starting",
         env=settings.env,
@@ -49,6 +58,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         spa_built=spa.is_built(),
     )
     yield
+    if preloading is not None and not preloading.done():
+        preloading.cancel()
     get_logger("shutdown").info("demo_stopping", sessions=len(registry.sessions))
     # Ends every MCP session and revokes every visitor's own grant, so a
     # redeploy leaves nothing linked on the server.

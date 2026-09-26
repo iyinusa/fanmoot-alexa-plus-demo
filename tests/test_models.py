@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from google.adk.models.llm_request import LlmRequest
+from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
 from app.agent import models
@@ -16,13 +17,12 @@ from app.agent.models import (
     ModelRung,
     NoModelAvailable,
     TurnLedger,
-    is_retryable,
     parse_chain,
 )
 from app.agent.trace import Tracer
 from app.agent.usage import UsageLedger, estimate_usd
 from app.settings import DEFAULT_MODEL_CHAIN, Settings
-from tests.scripted import ScriptedLlm, fail, say
+from tests.scripted import ScriptedLlm, fail, respond, say
 
 
 def test_the_chain_is_tried_in_the_order_given_with_bare_ids_qualified() -> None:
@@ -108,23 +108,6 @@ def test_credentials_are_passed_to_the_model_not_the_environment(
     assert gemini.model == "gemini-3.1-flash-lite"
     assert gemini.client_kwargs["api_key"] == "g"  # type: ignore[attr-defined]
     assert "AWS_ACCESS_KEY_ID" not in os.environ
-
-
-@pytest.mark.parametrize(
-    ("message", "retryable"),
-    [
-        ("litellm.RateLimitError: 429 Too Many Requests", True),
-        ("ThrottlingException: Rate exceeded", True),
-        ("litellm.Timeout: Request timed out", True),
-        ("ServiceUnavailableError: 503", True),
-        ("AccessDeniedException: You don't have access to the model", True),
-        ("BadRequestError: context length exceeded", False),
-        ("ContentPolicyViolationError: content_filter", False),
-        ("ValueError: something odd", False),
-    ],
-)
-def test_which_failures_fall_through(message: str, retryable: bool) -> None:
-    assert is_retryable(RuntimeError(message)) is retryable
 
 
 # ── FailoverLlm ──────────────────────────────────────────────────────────────
@@ -216,19 +199,65 @@ async def test_the_turn_stays_below_a_rung_that_failed() -> None:
     assert [call.model for call in ledger.calls] == ["beta/two", "beta/two"]
 
 
-async def test_a_request_every_provider_would_refuse_is_not_retried() -> None:
-    beta = ScriptedLlm.of(say("never"))
+@pytest.mark.parametrize(
+    "error",
+    [
+        # Worded in ways no list of "retryable" markers anticipated.
+        RuntimeError("500 INTERNAL. {'status': 'INTERNAL'}"),
+        RuntimeError("404 NOT_FOUND. models/gemini-x is not found for API version v1beta"),
+        RuntimeError("litellm.BadRequestError: BedrockException - ValidationException"),
+        RuntimeError("context length exceeded"),
+        ValueError("something odd"),
+    ],
+)
+async def test_any_failure_before_words_falls_through(error: Exception) -> None:
     llm, ledger, _frames, _usage = _chain(
+        {"alpha/one": ScriptedLlm.of(fail(error)), "beta/two": ScriptedLlm.of(say("Two-one."))}
+    )
+
+    assert await _drain(llm) == "Two-one."
+    assert ledger.failovers[0]["fell_through"] is True
+
+
+def _chunk(text: str = "", *, thought: bool = False) -> LlmResponse:
+    return LlmResponse(
+        content=types.Content(role="model", parts=[types.Part(text=text, thought=thought)]),
+        partial=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "responses",
+    [
+        # A streamed filter or malformed tool call: invisible chunks first, the
+        # error on the closing response.
+        [
+            _chunk(""),
+            _chunk("hmm", thought=True),
+            LlmResponse(
+                error_code=types.FinishReason.MALFORMED_FUNCTION_CALL,
+                error_message="A tool call's arguments could not be parsed.",
+            ),
+        ],
+        [LlmResponse(error_code=types.FinishReason.SAFETY, error_message="blocked")],
+        # An answer with nothing in it.
+        [LlmResponse(content=types.Content(role="model", parts=[]))],
+        # A stream that ends without a word.
+        [],
+    ],
+)
+async def test_an_error_or_empty_response_falls_through(responses: list[LlmResponse]) -> None:
+    llm, ledger, frames, _usage = _chain(
         {
-            "alpha/one": ScriptedLlm.of(fail(RuntimeError("context length exceeded"))),
-            "beta/two": beta,
+            "alpha/one": ScriptedLlm.of(respond(*responses)),
+            "beta/two": ScriptedLlm.of(say("Two-one.")),
         }
     )
 
-    with pytest.raises(RuntimeError, match="context length"):
-        await _drain(llm)
-    assert beta.remaining == 1
-    assert ledger.failovers[0]["fell_through"] is False
+    assert await _drain(llm) == "Two-one."
+    assert ledger.model == "beta/two"
+    assert ledger.failovers[0]["fell_through"] is True
+    assert [frame["method"] for frame in frames] == ["failover", "model call"]
 
 
 async def test_a_failure_after_words_were_streamed_is_not_replayed() -> None:

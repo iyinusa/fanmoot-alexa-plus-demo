@@ -53,6 +53,7 @@ from app.agent.oauth import (
 )
 from app.agent.runtime import APP_NAME, SESSIONS, Turn, app_visible, is_write, view_uri
 from app.agent.trace import Tracer
+from app.agent.usage import TurnGate
 from app.guided import GuideBoard
 from app.logging_config import get_logger
 from app.settings import Settings
@@ -825,6 +826,10 @@ class SessionRegistry:
         self._sweeper: asyncio.Task[None] | None = None
         #: One reading of what is on, for every visitor (W4).
         self.guide = GuideBoard(settings)
+        #: The ceilings on turns across sessions (W6-3).
+        self.gate = TurnGate(settings)
+        #: The count last broadcast, so an unchanged one is not sent again.
+        self._presence_sent: int | None = None
 
     def create(self) -> VisitorSession | None:
         if len(self.sessions) >= self.settings.max_sessions:
@@ -863,6 +868,31 @@ class SessionRegistry:
     async def discard(self, session: VisitorSession) -> None:
         self.sessions.pop(session.id, None)
         await session.close()
+        self.announce_presence()
+
+    # ── Presence ─────────────────────────────────────────────────────────────
+    def _online(self) -> list[VisitorSession]:
+        """Sessions with a browser on the other end right now.
+
+        A session kept for its grace period after its socket dropped is not
+        counted: nobody is looking at it, and it may never be resumed.
+        """
+        return [s for s in self.sessions.values() if not s.closed and s.outbox.attached]
+
+    def announce_presence(self, to: VisitorSession | None = None) -> None:
+        """Tell every open page how many are online, when that number changes.
+
+        ``to`` is a page that has just attached and needs the number even when
+        it has not changed (a reload that resumed its old session).
+        """
+        online = self._online()
+        frame = {"type": "presence", "online": len(online)}
+        if len(online) != self._presence_sent:
+            self._presence_sent = len(online)
+            for session in online:
+                session.send(frame)
+        elif to is not None and not to.closed:
+            to.send(frame)
 
     # ── Housekeeping ─────────────────────────────────────────────────────────
     def start_sweeper(self, interval_s: float = 30.0) -> None:

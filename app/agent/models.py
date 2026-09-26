@@ -15,13 +15,16 @@ no restart.
 
 **Failover per model call, not per turn.** ``FailoverLlm`` is the model the ADK
 agent sees. Each time ADK asks it for a response it tries the chain's rungs in
-order, and a rung that errors, throttles or times out *before its first chunk*
-falls through to the next. Doing it per call rather than per turn is the
-difference between safe and unsafe: a turn that already posted a take and
-failed on the follow-up sentence must not be replayed from the top on the next
-provider, or the take goes out twice. A failure *after* the first chunk has
-been streamed to the visitor is not retried either — the words are already on
-screen.
+order, and a rung that fails in any way *before its first words or tool call*
+falls through to the next — an exception of any kind, an error response (a
+content filter, a malformed tool call, a token limit) or an empty answer. No
+error text is matched: providers word the same failure a dozen ways, and a
+list of the retryable ones is always missing the one that happens on stage.
+Doing it per call rather than per turn is the difference between safe and
+unsafe: a turn that already posted a take and failed on the follow-up sentence
+must not be replayed from the top on the next provider, or the take goes out
+twice. A failure *after* the first words have been streamed to the visitor is
+not retried either — the words are already on screen.
 
 **Sticky within a turn.** Once a rung has failed in a turn, the turn's later
 calls start below it. Asking a provider that just timed out for the next
@@ -178,6 +181,35 @@ def _aws_chain_has_credentials() -> bool:
     return found
 
 
+def preload(settings: Settings) -> None:
+    """Import the model adapters and LiteLLM's price table before anyone asks (W6-2).
+
+    They are imported lazily, at the first turn, and on a cold process that is
+    over a second of a judge's first question spent importing, on top of the
+    provider's own first TLS handshake. Run once at startup in a thread, so it
+    holds up neither the boot nor the event loop. Failures are ignored: the
+    first turn simply imports them itself, as before.
+    """
+    started = time.perf_counter()
+    try:
+        rungs = parse_chain(settings.model_chain)
+        # Building a Gemini adapter makes no request; it imports the SDK.
+        for rung in rungs:
+            if rung.provider == "gemini":
+                build_llm(rung, settings)
+                break
+        if any(rung.provider != "gemini" for rung in rungs):
+            from google.adk.models.lite_llm import LiteLlm  # noqa: F401, PLC0415
+
+        from app.agent.usage import estimate_usd  # noqa: PLC0415
+
+        estimate_usd("bedrock/us.amazon.nova-pro-v1:0", 1, 1, {})
+    except Exception as exc:
+        log.warning("model_preload_failed", error=str(exc)[:200])
+        return
+    log.info("model_preloaded", ms=round((time.perf_counter() - started) * 1000))
+
+
 def build_llm(rung: ModelRung, settings: Settings) -> BaseLlm:
     """A live ADK model for one rung, with its credentials passed to it directly.
 
@@ -224,66 +256,21 @@ def build_llm(rung: ModelRung, settings: Settings) -> BaseLlm:
     return LiteLlm(model=rung.qualified, **kwargs)
 
 
-# ── Failure classification ───────────────────────────────────────────────────
-#: Lifted from `fanmoot`'s resolver: matched on text because providers do not
-#: agree on exception types and LiteLLM flattens most of them into its own.
-_RETRYABLE = (
-    "rate limit",
-    "ratelimit",
-    "throttl",
-    "too many requests",
-    "429",
-    "quota",
-    "resource exhausted",
-    "resource_exhausted",
-    "overloaded",
-    "capacity",
-    "503",
-    "502",
-    "504",
-    "timeout",
-    "timed out",
-    "temporarily unavailable",
-    "service unavailable",
-    "serviceunavailable",
-    "connection",
-    "internal server error",
-    "internalservererror",
-    "apierror",
-    # A model this account cannot call is a reason to use the next one, not
-    # to fail the turn: Bedrock model access is per account and per region.
-    "accessdenied",
-    "access denied",
-    "not authorized",
-    "authentication",
-    "credentials",
-    "invalid api key",
-    "api key not valid",
-    "model not found",
-    "notfound",
-    "does not exist",
-    "on-demand throughput isn",
-    "inference profile",
-)
-
-#: A request every provider will refuse the same way. Trying it three times is
-#: three bills and one answer.
-_FATAL = (
-    "context length",
-    "context_length",
-    "too many tokens",
-    "input is too long",
-    "content policy",
-    "content_filter",
-    "safety",
-)
+# ── What counts as an answer ─────────────────────────────────────────────────
+class ModelFailed(Exception):
+    """A rung that answered without an exception, but with nothing usable."""
 
 
-def is_retryable(error: BaseException) -> bool:
-    message = f"{type(error).__name__}: {error}".lower()
-    if any(marker in message for marker in _FATAL):
-        return False
-    return any(marker in message for marker in _RETRYABLE)
+def _has_output(response: LlmResponse) -> bool:
+    """Whether a response carries anything the visitor hears or ADK acts on.
+
+    Text (not thoughts) or a tool call. Empty chunks, thought chunks and bare
+    usage chunks do not count: none of them reach the visitor, so a rung that
+    has sent only those can still be failed over from without saying anything
+    twice.
+    """
+    parts = response.content.parts if response.content and response.content.parts else []
+    return any((part.text and not part.thought) or part.function_call for part in parts)
 
 
 # ── The turn's ledger ────────────────────────────────────────────────────────
@@ -394,6 +381,11 @@ class FailoverLlm(BaseLlm):
             reason = unconfigured_reason(rung, settings)
             if reason is None and self._usage.over_cap(rung.provider, caps):
                 reason = f"{rung.provider} is over its daily ceiling"
+            # The demo-wide ceiling is checked per call as well as per turn
+            # (W6-3), so a turn that crosses it stops at its next model call
+            # instead of running to the end.
+            if reason is None and self._usage.over_total_cap(settings.daily_cap_usd):
+                reason = "the demo is over its daily ceiling"
             if reason is not None:
                 self._skip(rung, reason)
                 continue
@@ -418,20 +410,33 @@ class FailoverLlm(BaseLlm):
                 }
             )
             started = time.perf_counter()
-            yielded = False
+            # The point of no return: the first text or tool call handed on.
+            # Until then nothing has reached the visitor, so any failure at
+            # all — an exception, an error response, an empty answer — falls
+            # through to the next rung. After it, the words are on screen.
+            spoke = False
             try:
                 async for response in llm.generate_content_async(request, stream=stream):
-                    if response.error_code and not yielded:
-                        raise RuntimeError(f"{response.error_code}: {response.error_message}")
-                    yielded = True
+                    if not spoke:
+                        # Streaming reports a filter, a malformed tool call or
+                        # a token limit on the closing response, after empty
+                        # or thought chunks, not as an exception.
+                        if response.error_code:
+                            raise ModelFailed(
+                                f"{response.error_code}: {response.error_message or ''}".strip()
+                            )
+                        if not response.partial and not _has_output(response):
+                            raise ModelFailed("the model returned an empty response")
+                    spoke = spoke or _has_output(response)
                     if not response.partial:
                         self._record(rung, response, started)
                     yield response
+                if not spoke:
+                    raise ModelFailed("the model returned nothing")
             except Exception as exc:
                 self._usage.record_failure(rung.provider)
-                retryable = is_retryable(exc)
-                self._failed(rung, exc, retryable=retryable, streamed=yielded, started=started)
-                if yielded or not retryable:
+                self._failed(rung, exc, streamed=spoke, started=started)
+                if spoke:
                     raise
                 last_error = exc
                 ledger.start = rung.position + 1
@@ -514,17 +519,17 @@ class FailoverLlm(BaseLlm):
                 provider=rung.provider,
             )
 
-    def _failed(
-        self, rung: ModelRung, exc: Exception, *, retryable: bool, streamed: bool, started: float
-    ) -> None:
+    def _failed(self, rung: ModelRung, exc: Exception, *, streamed: bool, started: float) -> None:
         _, tracer = self._bound()
         error = f"{type(exc).__name__}: {exc}"[:300]
-        falls_through = retryable and not streamed and rung.position + 1 < len(self._rungs)
+        falls_through = not streamed and rung.position + 1 < len(self._rungs)
         self._ledger.failovers.append(
             {
                 "from": rung.qualified,
                 "error": error,
-                "retryable": retryable,
+                # Kept for the page's protocol: a failure is retryable exactly
+                # when the visitor has heard nothing from that rung yet.
+                "retryable": not streamed,
                 "fell_through": falls_through,
             }
         )
@@ -544,7 +549,7 @@ class FailoverLlm(BaseLlm):
         log.warning(
             "model_call_failed",
             model=rung.qualified,
-            retryable=retryable,
+            fell_through=falls_through,
             streamed=streamed,
             error=error,
         )

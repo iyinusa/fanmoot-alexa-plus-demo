@@ -77,11 +77,28 @@ def _error(code: str, message: str) -> dict[str, Any]:
     return {"type": "error", "code": code, "message": message}
 
 
+def client_address(websocket: WebSocket) -> str:
+    """Who is on the other end, for the per-address turn ceiling (W6-3).
+
+    Behind Dokploy's Traefik the socket's peer is Traefik, so the visitor is
+    the first ``X-Forwarded-For`` entry. Traefik replaces whatever a client
+    sends in that header unless the client is in ``forwardedHeaders.trustedIPs``
+    (the runbook says not to add the internet), and nothing reaches this
+    container except through Traefik: there is no published port.
+    """
+    forwarded = websocket.headers.get("x-forwarded-for", "")
+    first = forwarded.split(",")[0].strip()
+    if first:
+        return first
+    return websocket.client.host if websocket.client else ""
+
+
 class _Link:
     """The socket's current session, and the task writing its frames out."""
 
     def __init__(self, websocket: WebSocket, session: VisitorSession) -> None:
         self.websocket = websocket
+        self.address = client_address(websocket)
         self.session = session
         self.writer: asyncio.Task[None] | None = None
         self.queue: asyncio.Queue[dict[str, Any]] | None = None
@@ -150,6 +167,7 @@ async def ws(websocket: WebSocket) -> None:
     )
     session.send(session.state_frame())
     session.start()
+    registry.announce_presence(to=session)
 
     try:
         while True:
@@ -189,6 +207,7 @@ async def ws(websocket: WebSocket) -> None:
         pass
     finally:
         await link.unbind()
+        registry.announce_presence()
         log.info("ws_close")
         structlog.contextvars.unbind_contextvars("ws_session")
 
@@ -216,6 +235,7 @@ async def _handle(frame: dict[str, Any], link: _Link, registry: SessionRegistry)
         log.info("ws_resumed")
         target.send(target.state_frame(resumed=True))
         target.send_facts()
+        registry.announce_presence(to=target)
 
     elif kind == "turn":
         text = frame.get("text")
@@ -225,12 +245,24 @@ async def _handle(frame: dict[str, Any], link: _Link, registry: SessionRegistry)
         if len(text) > MAX_TURN_CHARS:
             session.send(_error("bad_turn", "That is longer than anyone says in one breath."))
             return
-        refusal = session.start_turn(text.strip())
-        if refusal == "busy":
+        refusal = registry.gate.refusal(link.address) or session.start_turn(text.strip())
+        if refusal is None:
+            registry.gate.record(link.address)
+        elif refusal == "busy":
             session.send(_error("busy", "Still answering the last one."))
         elif refusal == "turn_cap":
             session.send(
                 _error("turn_cap", "This session has used all its turns. Reload to start again.")
+            )
+        elif refusal == "address_cap":
+            log.warning("turn_refused", reason=refusal)
+            session.send(
+                _error("address_cap", "This address has used its turns for the hour. Try later.")
+            )
+        elif refusal == "daily_cap":
+            log.warning("turn_refused", reason=refusal)
+            session.send(
+                _error("daily_cap", "The demo has reached today's ceiling. It resets at 00:00 UTC.")
             )
 
     elif kind == "cancel":

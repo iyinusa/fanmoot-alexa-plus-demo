@@ -44,6 +44,9 @@ DEFAULT_MODEL_CHAIN = (
     "gemini/gemini-3.1-flash-lite"
 )
 
+#: W6-3's per-provider daily ceilings, in US dollars. See `provider_daily_cap_usd`.
+DEFAULT_PROVIDER_CAPS = '{"bedrock": 30, "gemini": 10}'
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -102,7 +105,10 @@ class Settings(BaseSettings):
 
     # How many turns one session may take. HAD-9's per-session ceiling: the
     # demo runs on a public URL, and a script looping on `/ws` should run out
-    # of turns long before it runs up a bill.
+    # of turns long before it runs up a bill. Measured (W6-3), a 40-turn
+    # session costs about $0.70 on Nova Pro and $3 on Claude Sonnet: input
+    # grows ~535 tokens a turn as the conversation lengthens. The daily
+    # ceilings below are what hold across sessions.
     session_turn_cap: int = 40
 
     # The largest MCP payload the trace panel receives in full. A `ui://` view
@@ -172,11 +178,32 @@ class Settings(BaseSettings):
     # chain; this is for a model added later.
     model_prices: str = ""
 
-    # A daily spend ceiling per provider, as JSON in US dollars:
-    # {"bedrock": 25, "gemini": 5}. A provider over its ceiling is skipped for
-    # the rest of the UTC day, and the chain falls through to the next one.
-    # Empty means no ceiling.
-    provider_daily_cap_usd: str = ""
+    # A daily spend ceiling per provider, as JSON in US dollars. A provider
+    # over its ceiling is skipped for the rest of the UTC day, and the chain
+    # falls through to the next one. `{}` means no ceiling; empty means the
+    # default, because docker-compose.yml passes an unset variable as "".
+    #
+    # The defaults are W6-3's, from `make turn-cost` on 2026-09-24: a turn is
+    # 11–17k tokens in and under 100 out, so about $0.011 on Nova Pro, $0.044
+    # on Claude Sonnet and $0.003 on Gemini Flash-Lite. $30 of Bedrock is some
+    # 2,700 Nova turns or 680 Claude turns; $10 of Gemini is 3,000 turns.
+    provider_daily_cap_usd: str = DEFAULT_PROVIDER_CAPS
+
+    # The demo-wide ceilings (W6-3). The per-session turn cap bounds one tab
+    # and a reload is a new tab, so these bound everything else. 0 turns each
+    # off.
+    #
+    # Dollars per UTC day, all providers together. Over it, turns are refused
+    # until midnight UTC rather than moved down the chain.
+    daily_cap_usd: float = 40.0
+    # Turns per UTC day. Also holds for a model with no known price, which the
+    # dollar ceilings cannot see. 2,000 is several times a busy judging day
+    # and about $22 on Nova Pro.
+    daily_turn_cap: int = 2000
+    # Turns one client address may start in any hour. A reload, or a script
+    # opening sockets, is still the same address. A judge's full run is 10–20
+    # turns; 60 on Claude Sonnet is about $2.60.
+    address_turns_per_hour: int = 60
 
     # ── OAuth: how this demo signs a fan in (W1-7) ───────────────────────────
     # How the demo identifies itself to the MCP server's authorization server:
@@ -216,6 +243,11 @@ class Settings(BaseSettings):
     @classmethod
     def _no_trailing_slash(cls, value: str) -> str:
         return value.rstrip("/")
+
+    @field_validator("provider_daily_cap_usd", mode="before")
+    @classmethod
+    def _default_caps_when_empty(cls, value: Any) -> Any:
+        return DEFAULT_PROVIDER_CAPS if isinstance(value, str) and not value.strip() else value
 
     @field_validator("model_prices", "provider_daily_cap_usd")
     @classmethod

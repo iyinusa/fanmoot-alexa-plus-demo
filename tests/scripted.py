@@ -1,8 +1,8 @@
 """A model that follows a script, so a turn is deterministic.
 
 Each step is one model call: a tool call, some words (streamed as partials,
-then the whole), or an exception. It records every request it was sent, so a
-test can assert what the agent was told and which tools it was offered.
+then the whole), an exception, or responses given verbatim. It records every
+request it was sent, so a test can assert what the agent was told and which tools it was offered.
 
 It stands in for a *provider*, not for the agent: it is handed to
 ``FailoverLlm`` through the same factory ``build_llm`` fills in production,
@@ -32,6 +32,11 @@ def say(text: str) -> dict[str, Any]:
 
 def fail(error: BaseException, *, after_words: str | None = None) -> dict[str, Any]:
     return {"raise": error, "after": after_words}
+
+
+def respond(*responses: LlmResponse) -> dict[str, Any]:
+    """Exactly these responses, in order: an error response, an empty stream."""
+    return {"respond": list(responses)}
 
 
 def _usage(tokens_in: int, tokens_out: int) -> types.GenerateContentResponseUsageMetadata:
@@ -70,6 +75,11 @@ class ScriptedLlm(BaseLlm):
         if not self._steps:
             raise AssertionError("the script ran out of steps")
         step = self._steps.pop(0)
+
+        if "respond" in step:
+            for response in step["respond"]:
+                yield response
+            return
 
         if "raise" in step:
             if step["after"]:

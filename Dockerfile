@@ -61,7 +61,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # a visitor's MCP session, agent state and WebSocket all live in this
 # process's memory, and a second worker would be a second, disjoint memory —
 # a resumed socket landing on the other one would find no session.
-# Scaling out is W6-2's decision, made with load numbers in hand.
+# W6-2 measured it: twenty visitors, each with an MCP session and a turn, were
+# answered as fast as one, so one worker it stays (docs/runbook.md, Load).
 CMD ["gunicorn", "app.main:app", \
     "-k", "uvicorn.workers.UvicornWorker", \
     "-b", "0.0.0.0:8090", \

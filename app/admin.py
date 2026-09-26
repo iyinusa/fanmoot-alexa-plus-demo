@@ -3,7 +3,8 @@
 The operator's two levers, on a running demo:
 
 ``GET``     the chain in force, today's calls, tokens and estimated spend per
-            provider, and each provider's ceiling (W1-3c)
+            provider, each provider's ceiling (W1-3c), and today's turns and
+            spend against the demo-wide ceilings (W6-3)
 ``PUT``     ``{"chain": ["gemini/gemini-3.1-flash-lite", …]}`` — replace the chain.
             The next turn uses it. This is "Bedrock got expensive, switch to
             Gemini" without a redeploy (W1-3)
@@ -17,6 +18,7 @@ advertise an operator surface it has not been given a key for.
 from __future__ import annotations
 
 import hmac
+import sys
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -63,9 +65,36 @@ def _report(request: Request) -> dict[str, Any]:
         ],
         "override": models.override_active(),
         "configured_chain": [rung.qualified for rung in models.parse_chain(settings.model_chain)],
-        "usage": LEDGER.snapshot(settings.provider_caps),
+        "usage": LEDGER.snapshot(
+            settings.provider_caps,
+            cap_usd=settings.daily_cap_usd,
+            turn_cap=settings.daily_turn_cap,
+        ),
         "sessions": len(registry.sessions),
+        "process": {"rss_mb": _rss_mb()},
     }
+
+
+def _rss_mb() -> float | None:
+    """This process's resident memory, for the load check (W6-2).
+
+    Current on Linux, where the container runs; elsewhere the peak, which is
+    what ``getrusage`` offers.
+    """
+    try:
+        with open("/proc/self/status") as status_file:
+            for line in status_file:
+                if line.startswith("VmRSS:"):
+                    return round(int(line.split()[1]) / 1024, 1)
+    except OSError:
+        pass
+    try:
+        import resource  # noqa: PLC0415 - POSIX only, and only for this fallback
+    except ImportError:
+        return None
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Bytes on macOS, kilobytes on Linux and the BSDs.
+    return round(peak / (1024 * 1024 if sys.platform == "darwin" else 1024), 1)
 
 
 @router.get("/models", dependencies=[Depends(_operator)])

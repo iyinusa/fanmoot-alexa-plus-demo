@@ -8,11 +8,74 @@ by calling the real [Fanmoot MCP server](https://mcp.fanmoot.com/mcp). A trace
 beside the conversation shows every MCP frame, OAuth request and model call as
 it happens.
 
-> **Status: ready to deploy (W6).** A real ADK agent, Bedrock first, drives a
-> real MCP session against `mcp.fanmoot.com` and signs fans in through a real
-> OAuth 2.1 flow. Twenty visitors at once, each holding an MCP session, were
-> load-checked on the production build. A cost guard caps the worst day at $40.
-> Deployment steps are in [`docs/runbook.md`](docs/runbook.md).
+A real ADK agent, with Amazon Bedrock first, drives a real MCP session against
+`mcp.fanmoot.com` and signs fans in through a real OAuth 2.1 flow. Only the
+Alexa+ device is simulated.
+
+## Try it
+
+**The fastest way is the live demo, with nothing to install:
+[alexaplus.fanmoot.com](https://alexaplus.fanmoot.com).** Press **Take the
+tour**, or ask *"what's happening in the Premier League today?"*, and open the
+trace to watch each MCP call.
+
+### Run it on your own machine
+
+You need **Docker** and **one model key**. Either key works:
+
+- a free **Gemini** key from [Google AI Studio](https://aistudio.google.com/apikey), or
+- **AWS** keys with Amazon Bedrock access to Nova Pro in `us-east-1`.
+  These also turn on Polly (voice) and Transcribe (listening).
+
+**1. Get the code and add your key.**
+
+```bash
+git clone https://github.com/iyinusa/fanmoot-alexa-plus-demo.git
+cd fanmoot-alexa-plus-demo
+
+echo "FMD_GEMINI_API_KEY=your-key" > .env
+# or, for Bedrock:
+# printf "FMD_AWS_ACCESS_KEY_ID=...\nFMD_AWS_SECRET_ACCESS_KEY=...\n" > .env
+```
+
+**2. Run it.**
+
+```bash
+docker compose -f docker-compose.local.yml up --build     # or: make local
+```
+
+The first build takes a few minutes, because it builds the web app inside
+Docker, so you don't need Node or Python. It is ready when the log says
+`Uvicorn running on http://0.0.0.0:8090`.
+
+**3. Open [http://localhost:8090](http://localhost:8090)** in Chrome, Edge,
+Firefox or Safari. Type or speak a question. To check the setup, open
+[http://localhost:8090/healthz](http://localhost:8090/healthz). It lists each
+model in the chain and whether it is `ready`, and shows that the MCP server is
+reachable.
+
+**4. Try posting.** Say or type *"tell them the second goal was offside"*.
+Alexa shows a **Sign in to Fanmoot** button, and the sign-in popup is the MCP
+server's own OAuth page. Sign in or create an account, and the take posts to
+the real fanmoot.com under your own handle.
+
+**5. Run the tests** (optional, needs [uv](https://docs.astral.sh/uv/) and
+Node.js 22):
+
+```bash
+make install && make test     # offline: no network, no keys
+```
+
+| | With a Gemini key | With AWS Bedrock keys |
+|---|---|---|
+| Answers, cards, trace, sign-in and posting | Yes | Yes |
+| Model that answers | Gemini | Amazon Nova Pro, then Claude on Bedrock |
+| Alexa's voice and listening | Your browser's built-in speech | Amazon Polly and Amazon Transcribe |
+
+With no key at all, the demo still opens and connects to the MCP server, and
+each answer explains that no model could reply.
+
+Deployment steps are in [`docs/runbook.md`](docs/runbook.md).
 
 ![The demo answering a question, with the card the MCP server returned and the MCP trace beside it](docs/screenshots/conversation.png)
 
@@ -26,15 +89,12 @@ it happens.
 </tr>
 </table>
 
-*Screenshots are taken by `make screenshots`, which asks the demo one real
-question in headless Chrome. These were taken against a local build answering
+*These were taken against a local build answering
 with Gemini; the deployment answers with Amazon Nova Pro on Bedrock first.*
 
 ## Why a simulation
 
-The Alexa+ Add-on toolkit is partner-gated, and the hackathon organisers have
-confirmed it is not available to participants. They asked for a simulated
-experience that looks and feels functional. This is one. **The simulation is
+The Alexa+ Add-on toolkit is partner-gated. **The simulation is
 only the surface.** The MCP server it calls is real, deployed, and connectable
 from Claude, ChatGPT or any other MCP client today. The agent's answers are
 real model output, not a script.
@@ -186,6 +246,9 @@ redacted, onto the trace the visitor sees.
   drift.
 
 ## Running it
+
+For a quick local run, use [Try it](#try-it) above. This
+section is for development, with Python 3.12, uv and Node.js 22 on the host.
 
 ```bash
 make install && cp .env.example .env
@@ -368,7 +431,35 @@ answered each turn, its tokens, estimated cost and the tools it called) to
 [`evidence/`](evidence/). It refuses to write anything if any turn was
 answered by a model that is not on Bedrock.
 
-## Licence
+## Licence and third-party notices
 
-[MIT](LICENSE). Club names and crests belong to their clubs, and Alexa is a
-trademark of Amazon.com, Inc. Neither is used here to imply endorsement.
+**The code is MIT-licensed.** See [LICENSE](LICENSE). You may use, copy,
+change and share it, including commercially, as long as the licence notice
+stays with it.
+
+The MIT licence covers the code in this repository only. It does not cover
+the following, which belong to others:
+
+- **Club crests.** The cards show club crests served by fanmoot.com, **only to
+  identify the clubs in a fixture or the club a fan supports**. Fanmoot gets
+  them through the official logo endpoint of
+  [API-Football](https://www.api-football.com/) (api-sports.io), whose terms
+  provide logos to API customers and recommend storing them rather than
+  hotlinking. API-Sports claims no rights in the logos. Crests are trademarks
+  of their clubs and leagues, and Fanmoot claims no ownership of any of them.
+  Every club also has a monogram badge generated by Fanmoot, and any crest is
+  replaced by its monogram on request from its rights holder. No crest is
+  stored in this repository.
+- **Names.** Club, player and competition names are used only to identify
+  them.
+- **Alexa and Alexa+** are trademarks of Amazon.com, Inc. The device surface
+  here is Fanmoot's own design and uses no Amazon assets.
+- **Fans' posts** are their authors' own, shown under Fanmoot's terms.
+- **The Fanmoot name, logo and Floodlit brand** are Fanmoot's own marks. They
+  are included so the demo renders correctly, and are not covered by the MIT
+  licence.
+- **Lato**, the typeface, is used under the
+  [SIL Open Font License 1.1](https://openfontlicense.org).
+
+This project is not affiliated with, endorsed by or certified by Amazon, any
+club or any league.

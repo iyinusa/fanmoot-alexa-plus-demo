@@ -16,7 +16,7 @@ BRAND_FILES := src/styles/tokens.css src/styles/fonts.css \
 	public/fonts/lato-700.woff2 public/fonts/lato-900.woff2 public/theme.js
 
 .DEFAULT_GOAL := help
-.PHONY: help install web-install dev dev-web test test-live evidence turn-cost smoke load-check screenshots lint fmt types typecheck-web check build-web bundle-budget share-image brand-check brand-sync build up down logs shell clean
+.PHONY: help local install web-install dev dev-web test test-live evidence turn-cost smoke load-check screenshots lint fmt types typecheck-web check build-web bundle-budget share-image brand-check brand-sync build up down logs shell clean
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -100,6 +100,9 @@ brand-sync:  ## Re-copy the Floodlit tokens, fonts and theme script from fanmoot
 
 build:  ## Build the Docker image
 	docker build -t fanmoot-alexa-plus-demo:local .
+
+local:  ## Run the demo on :8090 against the live MCP server — needs one model key
+	docker compose -f docker-compose.local.yml up --build
 
 up:  ## Start the stack with the dev overlay on :8090
 	@docker network inspect dokploy-network >/dev/null 2>&1 \

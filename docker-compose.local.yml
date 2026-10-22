@@ -1,0 +1,35 @@
+# Run the demo on one machine, with nothing to configure but a model key.
+#
+#   docker compose -f docker-compose.local.yml up --build     # or: make local
+#
+# This is the file for anyone trying the demo from a fresh clone, judges
+# included. It is standalone: no `dokploy-network`, no Node or Python on the
+# host (the image builds the SPA itself). Production uses docker-compose.yml,
+# which this file never touches.
+#
+# - The agent drives the live MCP server at https://mcp.fanmoot.com/mcp.
+# - Model keys are read from `.env` or from the shell. One is enough: a free
+#   Gemini key (FMD_GEMINI_API_KEY), or AWS keys with Bedrock access
+#   (FMD_AWS_ACCESS_KEY_ID, FMD_AWS_SECRET_ACCESS_KEY). With neither, the demo
+#   still opens and connects, and each answer says no model could reply.
+# - Without AWS keys, voice falls back to the browser's own speech, and typing
+#   always works.
+
+services:
+  demo:
+    build: .
+    ports:
+      - "8090:8090"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      FMD_ENV: development
+      FMD_PUBLIC_BASE_URL: http://localhost:8090
+      FMD_MCP_URL: ${FMD_MCP_URL:-https://mcp.fanmoot.com/mcp}
+      FMD_GEMINI_API_KEY: ${FMD_GEMINI_API_KEY:-}
+      FMD_AWS_REGION: ${FMD_AWS_REGION:-us-east-1}
+      FMD_AWS_ACCESS_KEY_ID: ${FMD_AWS_ACCESS_KEY_ID:-}
+      FMD_AWS_SECRET_ACCESS_KEY: ${FMD_AWS_SECRET_ACCESS_KEY:-}
+      FMD_AWS_SESSION_TOKEN: ${FMD_AWS_SESSION_TOKEN:-}
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8090
